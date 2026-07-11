@@ -1,0 +1,1 @@
+"""Meguyomi backend application."""
