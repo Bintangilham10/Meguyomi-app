@@ -3,4 +3,6 @@ celery[redis]==5.6.3
 pydantic-settings==2.14.2
 SQLAlchemy==2.0.51
 psycopg[binary]==3.3.4
+pwdlib[argon2]==0.3.0
+itsdangerous==2.2.0
 pytest==9.0.2
