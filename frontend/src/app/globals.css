@@ -5,8 +5,15 @@
   --foreground: #1f2420;
   --surface: #ffffff;
   --border: #d8d6ce;
+  --border-strong: #a9aca5;
   --accent: #1f6b4f;
+  --accent-strong: #174f3b;
+  --accent-soft: #b8d7ca;
   --muted: #626862;
+  --danger: #a33232;
+  --ink: #17231e;
+  --ink-muted: #b8c6bf;
+  --mint: #8ed3b7;
 }
 
 * {
