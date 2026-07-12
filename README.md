@@ -6,7 +6,8 @@ meliputi login, upload PDF, pemrosesan terjemahan di latar belakang, pratinjau,
 dan download PDF hasil terjemahan.
 
 Fondasi aplikasi sudah menyediakan Next.js, FastAPI, Celery, PostgreSQL, Redis,
-dan Docker Compose. Fitur login, upload, serta integrasi AI belum dibuat.
+Docker Compose, dan login privat satu akun. Fitur upload serta integrasi AI belum
+dibuat.
 
 ## Struktur proyek
 
@@ -25,13 +26,33 @@ dan Docker Compose. Fitur login, upload, serta integrasi AI belum dibuat.
 ## Menjalankan aplikasi
 
 1. Salin `.env.example` menjadi `.env`, lalu ganti password database lokal.
-2. Jalankan seluruh layanan:
+2. Build image API untuk menyiapkan utilitas keamanan:
+
+   ```powershell
+   docker-compose build api
+   ```
+
+3. Buat hash Argon2 untuk password login dan salin hasilnya ke
+   `ADMIN_PASSWORD_HASH`. Password dimasukkan melalui prompt dan tidak tampil di
+   command history:
+
+   ```powershell
+   docker-compose run --rm api python -m app.core.password_cli
+   ```
+
+4. Buat session secret dan salin hasilnya ke `SESSION_SECRET`:
+
+   ```powershell
+   docker-compose run --rm api python -c "import secrets; print(secrets.token_urlsafe(48))"
+   ```
+
+5. Jalankan seluruh layanan:
 
    ```powershell
    docker-compose up --build
    ```
 
-3. Buka frontend di `http://localhost:3000` dan dokumentasi API di
+6. Buka frontend di `http://localhost:3000` dan dokumentasi API di
    `http://localhost:8000/docs`.
 
 Untuk pengembangan tanpa container, gunakan perintah berikut:
