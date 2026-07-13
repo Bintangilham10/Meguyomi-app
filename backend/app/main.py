@@ -1,8 +1,11 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.auth import router as auth_router
+from app.api.dependencies import AuthenticationRequired
 from app.api.health import router as health_router
+from app.api.jobs import router as jobs_router
 from app.core.config import get_settings
 
 
@@ -24,3 +27,19 @@ app.add_middleware(
 )
 app.include_router(auth_router)
 app.include_router(health_router)
+app.include_router(jobs_router)
+
+
+@app.exception_handler(AuthenticationRequired)
+def authentication_required_handler(
+    _request: Request, _exception: AuthenticationRequired
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={
+            "error": {
+                "code": "NOT_AUTHENTICATED",
+                "message": "Sesi login tidak valid.",
+            }
+        },
+    )
