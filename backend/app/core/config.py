@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -15,6 +16,10 @@ class Settings(BaseSettings):
     session_max_age_seconds: int = 86_400
     login_max_failures: int = 5
     login_window_seconds: int = 60
+    storage_root: Path = Path("../storage")
+    max_upload_bytes: int = 50 * 1024 * 1024
+    max_pdf_pages: int = 100
+    upload_chunk_bytes: int = 1024 * 1024
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
