@@ -6,15 +6,16 @@ meliputi login, upload PDF, pemrosesan terjemahan di latar belakang, pratinjau,
 dan download PDF hasil terjemahan.
 
 Fondasi aplikasi sudah menyediakan Next.js, FastAPI, Celery, PostgreSQL, Redis,
-Docker Compose, dan login privat satu akun. Fitur upload serta integrasi AI belum
-dibuat.
+Docker Compose, login privat satu akun, serta UI dan API upload/riwayat PDF.
+Integrasi AI, pemrosesan terjemahan, pratinjau, dan download hasil belum dibuat.
 
 ## Struktur proyek
 
 - `frontend/` — aplikasi web Next.js dan aset publik.
 - `backend/app/api/` — endpoint HTTP FastAPI.
 - `backend/app/core/` — konfigurasi dan utilitas inti backend.
-- `backend/app/db/` — koneksi database dan migrasi.
+- `backend/app/db/` — koneksi dan sesi database.
+- `backend/alembic/` — migrasi skema database.
 - `backend/app/models/` — model database.
 - `backend/app/schemas/` — schema request dan response.
 - `backend/app/services/` — pipeline PDF, OCR, terjemahan, dan penyusunan hasil.
