@@ -2,12 +2,14 @@
   "name": "meguyomi-frontend",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types src/lib/job-contract.test.ts src/lib/upload-policy.test.ts"
   },
   "dependencies": {
     "next": "16.2.10",
