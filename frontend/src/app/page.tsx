@@ -1,6 +1,9 @@
 import { redirect } from "next/navigation";
 
+import { JobList } from "@/components/job-list";
+import { UploadForm } from "@/components/upload-form";
 import { getCurrentUser } from "@/lib/auth";
+import { getJobs } from "@/lib/jobs";
 
 import { logoutAction } from "./actions";
 
@@ -10,6 +13,7 @@ export default async function Home() {
   if (!user) {
     redirect("/login");
   }
+  const jobResult = await getJobs();
 
   return (
     <div className="min-h-screen">
@@ -32,24 +36,40 @@ export default async function Home() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl px-6 py-12 lg:px-10">
-        <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--accent)]">
-          Dashboard
-        </p>
-        <h1 className="mt-4 max-w-3xl text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">
-          Mulai terjemahan manga berikutnya.
-        </h1>
-        <p className="mt-5 max-w-2xl text-lg leading-8 text-[var(--muted)]">
-          Autentikasi sudah aktif. Alur upload PDF dan daftar pekerjaan akan
-          ditambahkan pada tahap berikutnya.
-        </p>
-
-        <section className="mt-10 border border-dashed border-[var(--border-strong)] bg-[var(--surface)] p-8 sm:p-10">
-          <h2 className="text-lg font-semibold">Belum ada pekerjaan terjemahan</h2>
-          <p className="mt-2 max-w-xl leading-7 text-[var(--muted)]">
-            Setelah fitur upload tersedia, status PDF akan tampil di area ini.
+      <main className="mx-auto w-full max-w-6xl px-6 py-10 lg:px-10 lg:py-14">
+        <div className="max-w-3xl">
+          <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--accent)]">
+            Dashboard
           </p>
-        </section>
+          <h1 className="mt-4 text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">
+            Terjemahkan manga Jepang dari satu PDF.
+          </h1>
+          <p className="mt-5 text-lg leading-8 text-[var(--muted)]">
+            Unggah bab manga untuk diperiksa dan dimasukkan ke antrean terjemahan bahasa Indonesia.
+          </p>
+        </div>
+
+        <div className="mt-10 grid gap-8 lg:grid-cols-[minmax(0,1.05fr)_minmax(22rem,0.95fr)] lg:items-start">
+          <section aria-labelledby="upload-title" className="border border-[var(--border)] bg-[var(--surface)] p-6 sm:p-8">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">Langkah 01</p>
+            <h2 id="upload-title" className="mt-2 text-2xl font-semibold">Upload manga</h2>
+            <p className="mt-3 leading-7 text-[var(--muted)]">
+              Teks Jepang belum diterjemahkan pada tahap ini. Setelah upload, pekerjaan akan menunggu worker pemrosesan.
+            </p>
+            <UploadForm />
+          </section>
+
+          <section aria-labelledby="jobs-title" className="border border-[var(--border)] bg-[var(--surface)] p-6 sm:p-8">
+            <div className="flex items-end justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">Langkah 02</p>
+                <h2 id="jobs-title" className="mt-2 text-2xl font-semibold">Riwayat pekerjaan</h2>
+              </div>
+              <p className="text-sm tabular-nums text-[var(--muted)]">{jobResult.jobs.length} PDF</p>
+            </div>
+            <JobList jobs={jobResult.jobs} error={jobResult.error} />
+          </section>
+        </div>
       </main>
     </div>
   );
