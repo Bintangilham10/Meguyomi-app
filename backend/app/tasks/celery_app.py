@@ -15,9 +15,5 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="Asia/Jakarta",
     enable_utc=True,
+    imports=("app.tasks.preparation",),
 )
-
-
-@celery_app.task(name="meguyomi.ping")
-def ping() -> str:
-    return "pong"
