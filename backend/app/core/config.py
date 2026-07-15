@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +21,9 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 50 * 1024 * 1024
     max_pdf_pages: int = 100
     upload_chunk_bytes: int = 1024 * 1024
+    preview_render_scale: float = Field(default=2.0, ge=0.5, le=4.0)
+    max_preview_pixels: int = 25_000_000
+    max_preview_bytes: int = 512 * 1024 * 1024
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
