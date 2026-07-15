@@ -1,9 +1,10 @@
 from datetime import datetime
-from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
+
+from app.models.job_status import JobStatus
 
 
 class JobResponse(BaseModel):
@@ -17,8 +18,11 @@ class JobResponse(BaseModel):
     original_filename: str
     size_bytes: int
     page_count: int
-    status: Literal["QUEUED"]
+    status: JobStatus
     created_at: datetime
+    started_at: datetime | None = None
+    prepared_at: datetime | None = None
+    failure_code: str | None = None
 
 
 class JobListResponse(BaseModel):
