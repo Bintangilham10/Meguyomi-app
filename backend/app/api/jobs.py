@@ -1,3 +1,5 @@
+import json
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, UploadFile, status
@@ -10,11 +12,14 @@ from app.api.dependencies import AuthenticatedUser
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.translation_job import TranslationJob
+from app.models.job_status import JobStatus
 from app.schemas.job import JobListResponse, JobResponse
 from app.services.pdf_upload import UploadValidationError, validate_and_store_pdf
+from app.tasks.preparation import dispatch_preparation_job
 
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=JobResponse)
@@ -43,7 +48,7 @@ async def create_job(
         stored_filename=stored_pdf.stored_filename,
         size_bytes=stored_pdf.size_bytes,
         page_count=stored_pdf.page_count,
-        status="QUEUED",
+        status=JobStatus.QUEUED,
         created_at=stored_pdf.created_at,
     )
     try:
@@ -54,6 +59,23 @@ async def create_job(
         db.rollback()
         stored_pdf.path.unlink(missing_ok=True)
         raise
+
+    try:
+        dispatch_preparation_job(job.id)
+    except Exception:
+        logger.exception(
+            json.dumps(
+                {
+                    "event": "job_dispatch_failed",
+                    "jobId": job.id,
+                    "failureCode": "QUEUE_UNAVAILABLE",
+                }
+            )
+        )
+        job.status = JobStatus.FAILED
+        job.failure_code = "QUEUE_UNAVAILABLE"
+        db.commit()
+        db.refresh(job)
 
     return JobResponse.model_validate(job)
 
