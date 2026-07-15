@@ -6,8 +6,9 @@ meliputi login, upload PDF, pemrosesan terjemahan di latar belakang, pratinjau,
 dan download PDF hasil terjemahan.
 
 Fondasi aplikasi sudah menyediakan Next.js, FastAPI, Celery, PostgreSQL, Redis,
-Docker Compose, login privat satu akun, serta UI dan API upload/riwayat PDF.
-Integrasi AI, pemrosesan terjemahan, pratinjau, dan download hasil belum dibuat.
+Docker Compose, login privat satu akun, UI dan API upload/riwayat PDF, serta worker
+yang merender halaman menjadi PNG preview. Integrasi OCR/AI, penyusunan PDF hasil,
+dan download hasil belum dibuat.
 
 ## Struktur proyek
 
