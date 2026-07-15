@@ -57,6 +57,7 @@ services:
       ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
       SESSION_SECRET: ${SESSION_SECRET:-development-only-session-secret-change-me}
       STORAGE_ROOT: /storage
+      PREVIEW_RENDER_SCALE: ${PREVIEW_RENDER_SCALE:-2.0}
     volumes:
       - ./storage:/storage
     depends_on:
