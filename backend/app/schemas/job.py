@@ -22,7 +22,10 @@ class JobResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None = None
     prepared_at: datetime | None = None
+    translation_started_at: datetime | None = None
+    completed_at: datetime | None = None
     failure_code: str | None = None
+    result_available: bool = False
 
 
 class JobListResponse(BaseModel):
