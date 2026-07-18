@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   parseApiErrorMessage,
   parseJobListResponse,
+  parseJobResponse,
 } from "./job-contract.ts";
 
 
@@ -19,6 +20,25 @@ const validJob = {
 
 test("parseJobListResponse accepts a valid backend response", () => {
   assert.deepEqual(parseJobListResponse({ data: [validJob] }), [validJob]);
+});
+
+
+test("parseJobResponse validates a created job", () => {
+  assert.deepEqual(parseJobResponse(validJob), validJob);
+  assert.equal(parseJobResponse({ ...validJob, status: "UNKNOWN" }), null);
+});
+
+
+test("parseJobListResponse accepts every preparation status", () => {
+  for (const status of [
+    "QUEUED",
+    "PROCESSING",
+    "READY_FOR_TRANSLATION",
+    "FAILED",
+  ]) {
+    const job = { ...validJob, status };
+    assert.deepEqual(parseJobListResponse({ data: [job] }), [job]);
+  }
 });
 
 
