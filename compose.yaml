@@ -24,6 +24,8 @@ services:
       ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
       SESSION_SECRET: ${SESSION_SECRET:-development-only-session-secret-change-me}
       STORAGE_ROOT: /storage
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
     command: sh -c "alembic upgrade head && fastapi run app/main.py --port 8000"
     volumes:
       - ./storage:/storage
@@ -58,6 +60,12 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:-development-only-session-secret-change-me}
       STORAGE_ROOT: /storage
       PREVIEW_RENDER_SCALE: ${PREVIEW_RENDER_SCALE:-2.0}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
+      GEMINI_TIMEOUT_SECONDS: ${GEMINI_TIMEOUT_SECONDS:-90}
+      GEMINI_MAX_IMAGE_BYTES: ${GEMINI_MAX_IMAGE_BYTES:-13631488}
+      GEMINI_MAX_RESPONSE_BYTES: ${GEMINI_MAX_RESPONSE_BYTES:-2097152}
+      GEMINI_MAX_OUTPUT_TOKENS: ${GEMINI_MAX_OUTPUT_TOKENS:-8192}
     volumes:
       - ./storage:/storage
     depends_on:
