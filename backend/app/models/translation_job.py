@@ -30,4 +30,17 @@ class TranslationJob(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    translation_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    result_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    @property
+    def result_available(self) -> bool:
+        return self.status == JobStatus.COMPLETED and bool(self.result_filename)
