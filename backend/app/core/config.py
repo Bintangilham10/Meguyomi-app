@@ -24,6 +24,23 @@ class Settings(BaseSettings):
     preview_render_scale: float = Field(default=2.0, ge=0.5, le=4.0)
     max_preview_pixels: int = 25_000_000
     max_preview_bytes: int = 512 * 1024 * 1024
+    gemini_api_key: str = ""
+    gemini_model: str = Field(
+        default="gemini-3.5-flash",
+        pattern=r"^[A-Za-z0-9._-]+$",
+    )
+    gemini_timeout_seconds: float = Field(default=90.0, ge=5.0, le=300.0)
+    gemini_max_image_bytes: int = Field(
+        default=13 * 1024 * 1024,
+        ge=1024,
+        le=14 * 1024 * 1024,
+    )
+    gemini_max_response_bytes: int = Field(
+        default=2 * 1024 * 1024,
+        ge=1024,
+        le=10 * 1024 * 1024,
+    )
+    gemini_max_output_tokens: int = Field(default=8_192, ge=256, le=65_536)
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
