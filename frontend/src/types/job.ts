@@ -1,4 +1,8 @@
-export type TranslationJobStatus = "QUEUED";
+export type TranslationJobStatus =
+  | "QUEUED"
+  | "PROCESSING"
+  | "READY_FOR_TRANSLATION"
+  | "FAILED";
 
 
 export interface TranslationJob {
@@ -8,4 +12,7 @@ export interface TranslationJob {
   pageCount: number;
   status: TranslationJobStatus;
   createdAt: string;
+  startedAt?: string | null;
+  preparedAt?: string | null;
+  failureCode?: string | null;
 }
