@@ -3,7 +3,8 @@
 import { FormEvent, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { parseApiErrorMessage } from "@/lib/job-contract";
+import { parseApiErrorMessage, parseJobResponse } from "@/lib/job-contract";
+import { getJobStatusPresentation } from "@/lib/job-status";
 import { validatePdfSelection } from "@/lib/upload-policy";
 
 
@@ -57,6 +58,23 @@ export function UploadForm() {
           kind: "error",
           message: parseApiErrorMessage(body, "PDF tidak dapat diunggah."),
         });
+        return;
+      }
+
+      const job = parseJobResponse(body);
+      if (!job) {
+        setFeedback({
+          kind: "error",
+          message: "Respons pekerjaan dari server tidak valid.",
+        });
+        return;
+      }
+      if (job.status === "FAILED") {
+        setFeedback({
+          kind: "error",
+          message: getJobStatusPresentation(job.status, job.failureCode).detail,
+        });
+        router.refresh();
         return;
       }
 
