@@ -11,6 +11,23 @@ function isTranslationJob(value: unknown): value is TranslationJob {
     return false;
   }
 
+  const validStatuses = new Set([
+    "QUEUED",
+    "PROCESSING",
+    "READY_FOR_TRANSLATION",
+    "FAILED",
+  ]);
+  const optionalDatesValid = [value.startedAt, value.preparedAt].every(
+    (date) =>
+      date === undefined ||
+      date === null ||
+      (typeof date === "string" && !Number.isNaN(Date.parse(date))),
+  );
+  const failureCodeValid =
+    value.failureCode === undefined ||
+    value.failureCode === null ||
+    (typeof value.failureCode === "string" && value.failureCode.length <= 64);
+
   return (
     typeof value.id === "string" &&
     value.id.length > 0 &&
@@ -20,9 +37,12 @@ function isTranslationJob(value: unknown): value is TranslationJob {
     Number(value.sizeBytes) >= 0 &&
     Number.isInteger(value.pageCount) &&
     Number(value.pageCount) > 0 &&
-    value.status === "QUEUED" &&
+    typeof value.status === "string" &&
+    validStatuses.has(value.status) &&
     typeof value.createdAt === "string" &&
-    !Number.isNaN(Date.parse(value.createdAt))
+    !Number.isNaN(Date.parse(value.createdAt)) &&
+    optionalDatesValid &&
+    failureCodeValid
   );
 }
 
@@ -32,6 +52,11 @@ export function parseJobListResponse(value: unknown): TranslationJob[] | null {
     return null;
   }
   return value.data.every(isTranslationJob) ? value.data : null;
+}
+
+
+export function parseJobResponse(value: unknown): TranslationJob | null {
+  return isTranslationJob(value) ? value : null;
 }
 
 
