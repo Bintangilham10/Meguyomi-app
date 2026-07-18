@@ -47,6 +47,11 @@ def authenticated_client(
     monkeypatch.setenv("ADMIN_PASSWORD_HASH", TEST_PASSWORD_HASH)
     monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
     get_settings.cache_clear()
+    monkeypatch.setattr(
+        "app.api.jobs.dispatch_preparation_job",
+        lambda _job_id: None,
+        raising=False,
+    )
 
     engine = create_engine(
         "sqlite://",
@@ -93,9 +98,17 @@ def test_upload_requires_authenticated_session() -> None:
 
 
 def test_upload_accepts_valid_pdf(
-    authenticated_client: TestClient, tmp_path: Path
+    authenticated_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     pdf = make_pdf(page_count=2)
+    dispatched_job_ids: list[str] = []
+    monkeypatch.setattr(
+        "app.api.jobs.dispatch_preparation_job",
+        dispatched_job_ids.append,
+        raising=False,
+    )
 
     response = authenticated_client.post(
         "/jobs",
@@ -110,6 +123,7 @@ def test_upload_accepts_valid_pdf(
     assert body["status"] == "QUEUED"
     assert body["id"]
     assert body["createdAt"]
+    assert dispatched_job_ids == [body["id"]]
     stored_files = list((tmp_path / "originals").glob("*.pdf"))
     assert len(stored_files) == 1
     assert stored_files[0].name != "chapter-01.pdf"
@@ -141,6 +155,29 @@ def test_upload_rejects_invalid_pdf(
     assert response.json()["error"]["code"] == expected_code
     assert list((tmp_path / "originals").glob("*")) == []
     assert list((tmp_path / "temporary").glob("*")) == []
+
+
+def test_upload_marks_job_failed_when_queue_is_unavailable(
+    authenticated_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_dispatch(_job_id: str) -> None:
+        raise RuntimeError("broker connection failed")
+
+    monkeypatch.setattr(
+        "app.api.jobs.dispatch_preparation_job",
+        fail_dispatch,
+        raising=False,
+    )
+
+    response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("chapter.pdf", make_pdf(), "application/pdf")},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "FAILED"
+    assert response.json()["failureCode"] == "QUEUE_UNAVAILABLE"
 
 
 def test_upload_rejects_file_over_size_limit(
