@@ -15,9 +15,17 @@ function isTranslationJob(value: unknown): value is TranslationJob {
     "QUEUED",
     "PROCESSING",
     "READY_FOR_TRANSLATION",
+    "TRANSLATION_QUEUED",
+    "TRANSLATING",
+    "COMPLETED",
     "FAILED",
   ]);
-  const optionalDatesValid = [value.startedAt, value.preparedAt].every(
+  const optionalDatesValid = [
+    value.startedAt,
+    value.preparedAt,
+    value.translationStartedAt,
+    value.completedAt,
+  ].every(
     (date) =>
       date === undefined ||
       date === null ||
@@ -27,6 +35,9 @@ function isTranslationJob(value: unknown): value is TranslationJob {
     value.failureCode === undefined ||
     value.failureCode === null ||
     (typeof value.failureCode === "string" && value.failureCode.length <= 64);
+  const resultAvailableValid =
+    value.resultAvailable === undefined ||
+    typeof value.resultAvailable === "boolean";
 
   return (
     typeof value.id === "string" &&
@@ -42,7 +53,8 @@ function isTranslationJob(value: unknown): value is TranslationJob {
     typeof value.createdAt === "string" &&
     !Number.isNaN(Date.parse(value.createdAt)) &&
     optionalDatesValid &&
-    failureCodeValid
+    failureCodeValid &&
+    resultAvailableValid
   );
 }
 
