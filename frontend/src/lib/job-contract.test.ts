@@ -34,9 +34,12 @@ test("parseJobListResponse accepts every preparation status", () => {
     "QUEUED",
     "PROCESSING",
     "READY_FOR_TRANSLATION",
+    "TRANSLATION_QUEUED",
+    "TRANSLATING",
+    "COMPLETED",
     "FAILED",
   ]) {
-    const job = { ...validJob, status };
+    const job = { ...validJob, status, resultAvailable: status === "COMPLETED" };
     assert.deepEqual(parseJobListResponse({ data: [job] }), [job]);
   }
 });
