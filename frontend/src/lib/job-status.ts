@@ -21,7 +21,22 @@ const presentations: Record<TranslationJobStatus, JobStatusPresentation> = {
   },
   READY_FOR_TRANSLATION: {
     label: "Siap untuk AI",
-    detail: "Seluruh halaman sudah siap untuk tahap OCR dan terjemahan.",
+    detail: "Seluruh halaman siap. Mulai terjemahan saat Anda siap memakai kuota AI.",
+    tone: "ready",
+  },
+  TRANSLATION_QUEUED: {
+    label: "Menunggu AI",
+    detail: "Terjemahan sudah masuk antrean worker.",
+    tone: "active",
+  },
+  TRANSLATING: {
+    label: "Menerjemahkan",
+    detail: "AI sedang membaca dan menerjemahkan halaman manga.",
+    tone: "active",
+  },
+  COMPLETED: {
+    label: "Selesai",
+    detail: "PDF terjemahan bahasa Indonesia siap diunduh.",
     tone: "ready",
   },
   FAILED: {
@@ -48,5 +63,10 @@ export function getJobStatusPresentation(
 
 
 export function shouldRefreshJobStatus(status: TranslationJobStatus): boolean {
-  return status === "QUEUED" || status === "PROCESSING";
+  return (
+    status === "QUEUED" ||
+    status === "PROCESSING" ||
+    status === "TRANSLATION_QUEUED" ||
+    status === "TRANSLATING"
+  );
 }
