@@ -66,7 +66,9 @@ area teks yang dideteksi dibuat putih lalu diisi teks Indonesia.
 2. Worker merender halaman hingga status `READY_FOR_TRANSLATION`.
 3. Tekan **Mulai terjemahan** untuk menyetujui penggunaan kuota Gemini API.
 4. Worker mengirim satu halaman per permintaan, memvalidasi JSON kotak teks,
-   menempatkan terjemahan Indonesia, dan menyusun PDF hasil.
+   menampilkan progres per halaman, menempatkan terjemahan Indonesia, dan
+   menyusun PDF hasil. Kegagalan AI yang dapat dipulihkan bisa dicoba ulang dari
+   daftar pekerjaan.
 5. Saat status `COMPLETED`, tekan **Download PDF**.
 
 File preview dan hasil tetap berada di `storage/` dan tidak dilacak Git. API key
