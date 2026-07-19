@@ -2,6 +2,9 @@ export type TranslationJobStatus =
   | "QUEUED"
   | "PROCESSING"
   | "READY_FOR_TRANSLATION"
+  | "TRANSLATION_QUEUED"
+  | "TRANSLATING"
+  | "COMPLETED"
   | "FAILED";
 
 
@@ -14,5 +17,8 @@ export interface TranslationJob {
   createdAt: string;
   startedAt?: string | null;
   preparedAt?: string | null;
+  translationStartedAt?: string | null;
+  completedAt?: string | null;
   failureCode?: string | null;
+  resultAvailable?: boolean;
 }
