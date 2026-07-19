@@ -13,6 +13,8 @@ from app.core.config import get_settings
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
+from app.models.job_status import JobStatus
+from app.models.translation_job import TranslationJob
 
 
 TEST_PASSWORD_HASH = (
@@ -37,6 +39,20 @@ def make_encrypted_pdf() -> bytes:
     writer.encrypt("secret")
     writer.write(output)
     return output.getvalue()
+
+
+def update_job(job_id: str, **values: object) -> None:
+    dependency = app.dependency_overrides[get_db]
+    session_iterator = dependency()
+    session = next(session_iterator)
+    try:
+        job = session.get(TranslationJob, job_id)
+        assert job is not None
+        for field, value in values.items():
+            setattr(job, field, value)
+        session.commit()
+    finally:
+        session_iterator.close()
 
 
 @pytest.fixture
@@ -213,3 +229,79 @@ def test_list_returns_uploaded_jobs(authenticated_client: TestClient) -> None:
     assert len(body["data"]) == 1
     assert body["data"][0]["id"] == upload_response.json()["id"]
     assert body["data"][0]["originalFilename"] == "history.pdf"
+
+
+def test_start_translation_claims_ready_job_once(
+    authenticated_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("chapter.pdf", make_pdf(), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    update_job(job_id, status=JobStatus.READY_FOR_TRANSLATION)
+    dispatched_job_ids: list[str] = []
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        "app.api.jobs.dispatch_translation_job",
+        dispatched_job_ids.append,
+        raising=False,
+    )
+
+    response = authenticated_client.post(f"/jobs/{job_id}/translation")
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "TRANSLATION_QUEUED"
+    assert dispatched_job_ids == [job_id]
+
+    duplicate_response = authenticated_client.post(f"/jobs/{job_id}/translation")
+    assert duplicate_response.status_code == 409
+    assert duplicate_response.json()["error"]["code"] == "JOB_NOT_READY"
+    get_settings.cache_clear()
+
+
+def test_start_translation_requires_ai_configuration(
+    authenticated_client: TestClient,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("chapter.pdf", make_pdf(), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    update_job(job_id, status=JobStatus.READY_FOR_TRANSLATION)
+
+    response = authenticated_client.post(f"/jobs/{job_id}/translation")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "AI_NOT_CONFIGURED"
+
+
+def test_download_returns_completed_job_result(
+    authenticated_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("chapter.pdf", make_pdf(), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    result_filename = f"{job_id}.pdf"
+    results = tmp_path / "results"
+    results.mkdir(parents=True)
+    result_bytes = make_pdf(page_count=2)
+    (results / result_filename).write_bytes(result_bytes)
+    update_job(
+        job_id,
+        status=JobStatus.COMPLETED,
+        result_filename=result_filename,
+    )
+
+    response = authenticated_client.get(f"/jobs/{job_id}/result")
+
+    assert response.status_code == 200
+    assert response.content == result_bytes
+    assert response.headers["content-type"] == "application/pdf"
+    assert "chapter-indonesia.pdf" in response.headers["content-disposition"]
+    assert response.headers["cache-control"] == "private, no-store"
