@@ -15,5 +15,5 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="Asia/Jakarta",
     enable_utc=True,
-    imports=("app.tasks.preparation",),
+    imports=("app.tasks.preparation", "app.tasks.translation"),
 )
