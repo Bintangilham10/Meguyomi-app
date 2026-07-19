@@ -7,6 +7,17 @@ from app.db.base import Base
 from app.models.job_status import JobStatus
 
 
+RETRYABLE_TRANSLATION_FAILURE_CODES = frozenset(
+    {
+        "AI_NOT_CONFIGURED",
+        "AI_TRANSLATION_FAILED",
+        "QUEUE_UNAVAILABLE",
+        "RESULT_BUILD_FAILED",
+        "TRANSLATION_FAILED",
+    }
+)
+
+
 class TranslationJob(Base):
     __tablename__ = "translation_jobs"
 
@@ -16,6 +27,7 @@ class TranslationJob(Base):
     stored_filename: Mapped[str] = mapped_column(String(255), unique=True)
     size_bytes: Mapped[int] = mapped_column(BigInteger)
     page_count: Mapped[int] = mapped_column(Integer)
+    translated_page_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(32), default=JobStatus.QUEUED)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -44,3 +56,11 @@ class TranslationJob(Base):
     @property
     def result_available(self) -> bool:
         return self.status == JobStatus.COMPLETED and bool(self.result_filename)
+
+    @property
+    def can_retry_translation(self) -> bool:
+        return (
+            self.status == JobStatus.FAILED
+            and self.prepared_at is not None
+            and self.failure_code in RETRYABLE_TRANSLATION_FAILURE_CODES
+        )
