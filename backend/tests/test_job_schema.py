@@ -8,9 +8,17 @@ from app.schemas.job import JobResponse
 
 @pytest.mark.parametrize(
     "job_status",
-    ["QUEUED", "PROCESSING", "READY_FOR_TRANSLATION", "FAILED"],
+    [
+        "QUEUED",
+        "PROCESSING",
+        "READY_FOR_TRANSLATION",
+        "TRANSLATION_QUEUED",
+        "TRANSLATING",
+        "COMPLETED",
+        "FAILED",
+    ],
 )
-def test_job_response_supports_preparation_lifecycle(job_status: str) -> None:
+def test_job_response_supports_translation_lifecycle(job_status: str) -> None:
     response = JobResponse.model_validate(
         {
             "id": uuid4(),
@@ -21,8 +29,12 @@ def test_job_response_supports_preparation_lifecycle(job_status: str) -> None:
             "created_at": datetime.now(timezone.utc),
             "started_at": None,
             "prepared_at": None,
+            "translation_started_at": None,
+            "completed_at": None,
             "failure_code": None,
+            "result_available": job_status == "COMPLETED",
         }
     )
 
     assert response.status == job_status
+    assert response.result_available is (job_status == "COMPLETED")
