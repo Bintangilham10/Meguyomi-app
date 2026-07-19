@@ -6,14 +6,17 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import AuthenticatedUser
 from app.core.config import get_settings
 from app.db.session import get_db
-from app.models.translation_job import TranslationJob
+from app.models.translation_job import (
+    RETRYABLE_TRANSLATION_FAILURE_CODES,
+    TranslationJob,
+)
 from app.models.job_status import JobStatus
 from app.schemas.job import JobListResponse, JobResponse
 from app.services.pdf_upload import UploadValidationError, validate_and_store_pdf
@@ -127,10 +130,20 @@ def start_translation(
         .where(
             TranslationJob.id == normalized_job_id,
             TranslationJob.owner_username == username,
-            TranslationJob.status == JobStatus.READY_FOR_TRANSLATION,
+            or_(
+                TranslationJob.status == JobStatus.READY_FOR_TRANSLATION,
+                and_(
+                    TranslationJob.status == JobStatus.FAILED,
+                    TranslationJob.prepared_at.is_not(None),
+                    TranslationJob.failure_code.in_(
+                        RETRYABLE_TRANSLATION_FAILURE_CODES
+                    ),
+                ),
+            ),
         )
         .values(
             status=JobStatus.TRANSLATION_QUEUED,
+            translated_page_count=0,
             translation_started_at=None,
             completed_at=None,
             result_filename=None,
@@ -154,7 +167,7 @@ def start_translation(
         return api_error(
             status.HTTP_409_CONFLICT,
             "JOB_NOT_READY",
-            "Pekerjaan belum siap untuk memulai terjemahan AI.",
+            "Pekerjaan belum siap atau kegagalannya tidak dapat dicoba ulang.",
         )
 
     db.commit()
