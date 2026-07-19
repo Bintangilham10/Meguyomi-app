@@ -54,7 +54,7 @@ export default async function Home() {
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">Langkah 01</p>
             <h2 id="upload-title" className="mt-2 text-2xl font-semibold">Upload manga</h2>
             <p className="mt-3 leading-7 text-[var(--muted)]">
-              Teks Jepang belum diterjemahkan pada tahap ini. Setelah upload, worker menyiapkan setiap halaman untuk tahap OCR dan AI berikutnya.
+              Setelah upload, worker menyiapkan halaman. Anda dapat memulai AI saat siap menggunakan kuota Gemini.
             </p>
             <UploadForm />
           </section>
