@@ -25,6 +25,7 @@ def test_job_response_supports_translation_lifecycle(job_status: str) -> None:
             "original_filename": "chapter.pdf",
             "size_bytes": 1_024,
             "page_count": 10,
+            "translated_page_count": 3,
             "status": job_status,
             "created_at": datetime.now(timezone.utc),
             "started_at": None,
@@ -37,4 +38,5 @@ def test_job_response_supports_translation_lifecycle(job_status: str) -> None:
     )
 
     assert response.status == job_status
+    assert response.translated_page_count == 3
     assert response.result_available is (job_status == "COMPLETED")
