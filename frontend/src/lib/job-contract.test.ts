@@ -13,6 +13,8 @@ const validJob = {
   originalFilename: "chapter-01.pdf",
   sizeBytes: 1_024,
   pageCount: 12,
+  translatedPageCount: 0,
+  canRetryTranslation: false,
   status: "QUEUED",
   createdAt: "2026-07-14T01:30:00Z",
 };
@@ -48,6 +50,18 @@ test("parseJobListResponse accepts every preparation status", () => {
 test("parseJobListResponse rejects malformed job data", () => {
   assert.equal(
     parseJobListResponse({ data: [{ ...validJob, pageCount: "12" }] }),
+    null,
+  );
+  assert.equal(
+    parseJobListResponse({ data: [{ ...validJob, translatedPageCount: -1 }] }),
+    null,
+  );
+  assert.equal(
+    parseJobListResponse({ data: [{ ...validJob, translatedPageCount: 13 }] }),
+    null,
+  );
+  assert.equal(
+    parseJobListResponse({ data: [{ ...validJob, canRetryTranslation: "yes" }] }),
     null,
   );
   assert.equal(parseJobListResponse({ data: "not-an-array" }), null);
