@@ -10,6 +10,7 @@ from app.models.job_status import JobStatus
 RETRYABLE_TRANSLATION_FAILURE_CODES = frozenset(
     {
         "AI_NOT_CONFIGURED",
+        "AI_RATE_LIMITED",
         "AI_TRANSLATION_FAILED",
         "QUEUE_UNAVAILABLE",
         "RESULT_BUILD_FAILED",
@@ -43,6 +44,10 @@ class TranslationJob(Base):
         nullable=True,
     )
     translation_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    checkpoint_updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
