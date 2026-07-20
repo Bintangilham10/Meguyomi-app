@@ -1,6 +1,7 @@
 from io import BytesIO
 from pathlib import Path
 from collections.abc import Iterator
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -276,6 +277,46 @@ def test_start_translation_requires_ai_configuration(
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "AI_NOT_CONFIGURED"
+
+
+@pytest.mark.parametrize(
+    "failure_code",
+    ["AI_TRANSLATION_FAILED", "AI_RATE_LIMITED"],
+)
+def test_start_translation_retries_recoverable_ai_failure(
+    authenticated_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_code: str,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("chapter.pdf", make_pdf(), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    update_job(
+        job_id,
+        status=JobStatus.FAILED,
+        prepared_at=datetime.now(timezone.utc),
+        failure_code=failure_code,
+        translated_page_count=1,
+    )
+    dispatched_job_ids: list[str] = []
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        "app.api.jobs.dispatch_translation_job",
+        dispatched_job_ids.append,
+        raising=False,
+    )
+
+    response = authenticated_client.post(f"/jobs/{job_id}/translation")
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "TRANSLATION_QUEUED"
+    assert response.json()["translatedPageCount"] == 1
+    assert response.json()["canRetryTranslation"] is False
+    assert dispatched_job_ids == [job_id]
+    get_settings.cache_clear()
 
 
 def test_download_returns_completed_job_result(
