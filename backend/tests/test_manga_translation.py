@@ -1,11 +1,15 @@
 import json
+import logging
+from io import BytesIO
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import Request
 
 import pytest
 from PIL import Image
 from pydantic import ValidationError
 
+from app.services import manga_translation
 from app.services.manga_translation import (
     GeminiPageTranslator,
     GeminiTranslationError,
@@ -44,6 +48,17 @@ def test_page_translation_rejects_invalid_model_coordinates() -> None:
                 ]
             }
         )
+
+
+def test_page_translation_rejects_more_than_eighty_regions() -> None:
+    region = {
+        "box_2d": [100, 200, 400, 800],
+        "source_text": "こんにちは",
+        "translated_text": "Halo",
+    }
+
+    with pytest.raises(ValidationError):
+        PageTranslation.model_validate({"regions": [region] * 81})
 
 
 def test_gemini_translator_sends_bounded_structured_request(tmp_path: Path) -> None:
@@ -92,14 +107,181 @@ def test_gemini_translator_sends_bounded_structured_request(tmp_path: Path) -> N
     serialized_schema = json.dumps(
         payload["generationConfig"]["responseJsonSchema"]
     )
+    assert '"$defs"' not in serialized_schema
+    assert '"$ref"' not in serialized_schema
+    assert '"prefixItems"' not in serialized_schema
     assert '"default"' not in serialized_schema
     assert '"minLength"' not in serialized_schema
     assert '"maxLength"' not in serialized_schema
+    regions_schema = payload["generationConfig"]["responseJsonSchema"][
+        "properties"
+    ]["regions"]
+    assert "maxItems" not in regions_schema
+    box_schema = regions_schema["items"]["properties"]["box_2d"]
+    assert box_schema == {
+        "type": "array",
+        "items": {"type": "integer", "minimum": 0, "maximum": 1000},
+        "minItems": 4,
+        "maxItems": 4,
+    }
     assert payload["contents"][0]["parts"][0]["inline_data"]["mime_type"] == (
         "image/png"
     )
     assert captured["timeout"] == 30
     assert captured["max_response_bytes"] == 100_000
+
+
+def test_gemini_http_error_logs_status_without_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def reject_request(_request: Request, timeout: float):
+        del timeout
+        raise HTTPError(
+            url="https://generativelanguage.googleapis.com/test",
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=BytesIO(b'{"error":{"message":"provider-body-secret"}}'),
+        )
+
+    monkeypatch.setattr(manga_translation, "urlopen", reject_request)
+    request = Request(
+        "https://generativelanguage.googleapis.com/test",
+        headers={"x-goog-api-key": "fake-secret-key"},
+    )
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(GeminiTranslationError, match="failed"):
+            manga_translation._read_response(request, 30, 100_000)
+
+    assert '"httpStatus": 400' in caplog.text
+    assert "fake-secret-key" not in caplog.text
+    assert "provider-body-secret" not in caplog.text
+
+
+def test_gemini_http_429_is_retryable_and_respects_retry_after(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def reject_request(_request: Request, timeout: float):
+        del timeout
+        raise HTTPError(
+            url="https://generativelanguage.googleapis.com/test",
+            code=429,
+            msg="Too Many Requests",
+            hdrs={"Retry-After": "17"},
+            fp=BytesIO(b'{"error":{"message":"quota exceeded"}}'),
+        )
+
+    monkeypatch.setattr(manga_translation, "urlopen", reject_request)
+    request = Request("https://generativelanguage.googleapis.com/test")
+
+    with pytest.raises(GeminiTranslationError) as captured:
+        manga_translation._read_response(request, 30, 100_000)
+
+    assert captured.value.http_status == 429
+    assert captured.value.retryable is True
+    assert captured.value.retry_after_seconds == 17
+
+
+def test_gemini_translator_retries_transient_error_then_succeeds(
+    tmp_path: Path,
+) -> None:
+    page_path = tmp_path / "page.png"
+    make_page(page_path)
+    calls = 0
+    sleeps: list[float] = []
+
+    def transport(_request: Request, _timeout: float, _limit: int) -> bytes:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise GeminiTranslationError(
+                "Gemini request failed.",
+                http_status=429,
+                retryable=True,
+                retry_after_seconds=12,
+            )
+        return gemini_response({"regions": []})
+
+    translator = GeminiPageTranslator(
+        api_key="test-key",
+        max_retries=2,
+        retry_base_delay_seconds=2,
+        retry_max_delay_seconds=60,
+        min_request_interval_seconds=0,
+        transport=transport,
+        sleeper=sleeps.append,
+        jitter=lambda _start, _end: 0,
+    )
+
+    result = translator.translate_page(page_path)
+
+    assert result.regions == []
+    assert calls == 2
+    assert sleeps == [12]
+
+
+def test_gemini_translator_does_not_retry_non_transient_error(
+    tmp_path: Path,
+) -> None:
+    page_path = tmp_path / "page.png"
+    make_page(page_path)
+    calls = 0
+    sleeps: list[float] = []
+
+    def transport(_request: Request, _timeout: float, _limit: int) -> bytes:
+        nonlocal calls
+        calls += 1
+        raise GeminiTranslationError(
+            "Gemini request failed.",
+            http_status=400,
+            retryable=False,
+        )
+
+    translator = GeminiPageTranslator(
+        api_key="test-key",
+        max_retries=2,
+        min_request_interval_seconds=0,
+        transport=transport,
+        sleeper=sleeps.append,
+    )
+
+    with pytest.raises(GeminiTranslationError):
+        translator.translate_page(page_path)
+
+    assert calls == 1
+    assert sleeps == []
+
+
+def test_gemini_translator_paces_consecutive_pages(tmp_path: Path) -> None:
+    page_path = tmp_path / "page.png"
+    make_page(page_path)
+    now = 0.0
+    sleeps: list[float] = []
+
+    def clock() -> float:
+        return now
+
+    def sleep(seconds: float) -> None:
+        nonlocal now
+        sleeps.append(seconds)
+        now += seconds
+
+    translator = GeminiPageTranslator(
+        api_key="test-key",
+        min_request_interval_seconds=15,
+        transport=lambda _request, _timeout, _limit: gemini_response(
+            {"regions": []}
+        ),
+        clock=clock,
+        sleeper=sleep,
+    )
+
+    translator.translate_page(page_path)
+    translator.translate_page(page_path)
+
+    assert sleeps == [15]
 
 
 def test_gemini_translator_rejects_untrusted_invalid_output(tmp_path: Path) -> None:
