@@ -41,6 +41,27 @@ class Settings(BaseSettings):
         le=10 * 1024 * 1024,
     )
     gemini_max_output_tokens: int = Field(default=8_192, ge=256, le=65_536)
+    gemini_min_request_interval_seconds: float = Field(
+        default=15.0,
+        ge=0.0,
+        le=300.0,
+    )
+    gemini_max_retries: int = Field(default=5, ge=0, le=10)
+    gemini_retry_base_delay_seconds: float = Field(
+        default=5.0,
+        ge=0.1,
+        le=60.0,
+    )
+    gemini_retry_max_delay_seconds: float = Field(
+        default=60.0,
+        ge=1.0,
+        le=300.0,
+    )
+    translation_checkpoint_retention_days: int = Field(
+        default=7,
+        ge=1,
+        le=365,
+    )
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
