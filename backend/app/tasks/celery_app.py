@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 
 from app.core.config import get_settings
 
@@ -15,5 +16,15 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="Asia/Jakarta",
     enable_utc=True,
-    imports=("app.tasks.preparation", "app.tasks.translation"),
+    imports=(
+        "app.tasks.preparation",
+        "app.tasks.translation",
+        "app.tasks.maintenance",
+    ),
+    beat_schedule={
+        "cleanup-translation-checkpoints": {
+            "task": "meguyomi.cleanup_translation_checkpoints",
+            "schedule": crontab(hour=3, minute=0),
+        }
+    },
 )
