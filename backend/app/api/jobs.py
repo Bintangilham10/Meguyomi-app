@@ -143,7 +143,6 @@ def start_translation(
         )
         .values(
             status=JobStatus.TRANSLATION_QUEUED,
-            translated_page_count=0,
             translation_started_at=None,
             completed_at=None,
             result_filename=None,
