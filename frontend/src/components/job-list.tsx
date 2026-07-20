@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   getJobStatusPresentation,
   shouldRefreshJobStatus,
+  shouldShowTranslationProgress,
 } from "@/lib/job-status";
 import { parseApiErrorMessage, parseJobResponse } from "@/lib/job-contract";
 import type { TranslationJob } from "@/types/job";
@@ -105,6 +106,8 @@ export function JobList({ jobs, error }: JobListProps) {
       >
       {jobs.map((job) => {
         const presentation = getJobStatusPresentation(job.status, job.failureCode);
+        const canStartTranslation =
+          job.status === "READY_FOR_TRANSLATION" || job.canRetryTranslation;
         const statusClass =
           presentation.tone === "danger"
             ? "border-[var(--danger)] text-[var(--danger)]"
@@ -123,6 +126,31 @@ export function JobList({ jobs, error }: JobListProps) {
                 {job.pageCount} halaman · {formatBytes(job.sizeBytes)} ·{" "}
                 {dateFormatter.format(new Date(job.createdAt))}
               </p>
+              {shouldShowTranslationProgress(
+                job.status,
+                job.translatedPageCount,
+              ) ? (
+                <div className="mt-3 max-w-xs">
+                  <div className="flex justify-between gap-4 text-xs text-[var(--muted)]">
+                    <span>
+                      {job.status === "FAILED"
+                        ? "Checkpoint tersimpan"
+                        : job.status === "TRANSLATION_QUEUED"
+                          ? "Akan dilanjutkan"
+                          : "Progres terjemahan"}
+                    </span>
+                    <span>
+                      {job.translatedPageCount}/{job.pageCount} halaman
+                    </span>
+                  </div>
+                  <progress
+                    aria-label={`Terjemahan ${job.originalFilename}`}
+                    className="mt-1 h-2 w-full accent-[var(--accent)]"
+                    max={job.pageCount}
+                    value={job.translatedPageCount}
+                  />
+                </div>
+              ) : null}
             </div>
             <div className="flex flex-col items-start gap-2 sm:items-end">
               <p
@@ -139,7 +167,12 @@ export function JobList({ jobs, error }: JobListProps) {
                 {presentation.label}
                 <span className="sr-only">: {presentation.detail}</span>
               </p>
-              {job.status === "READY_FOR_TRANSLATION" ? (
+              {job.status === "FAILED" ? (
+                <p className="max-w-xs text-left text-xs leading-5 text-[var(--muted)] sm:text-right">
+                  {presentation.detail}
+                </p>
+              ) : null}
+              {canStartTranslation ? (
                 <button
                   type="button"
                   disabled={startingJobId === job.id}
@@ -148,7 +181,9 @@ export function JobList({ jobs, error }: JobListProps) {
                 >
                   {startingJobId === job.id
                     ? "Mengantrekan..."
-                    : "Mulai terjemahan"}
+                    : job.canRetryTranslation
+                      ? "Coba terjemahkan lagi"
+                      : "Mulai terjemahan"}
                 </button>
               ) : null}
               {job.status === "COMPLETED" && job.resultAvailable ? (
