@@ -18,6 +18,7 @@ class JobResponse(BaseModel):
     original_filename: str
     size_bytes: int
     page_count: int
+    translated_page_count: int = 0
     status: JobStatus
     created_at: datetime
     started_at: datetime | None = None
@@ -26,6 +27,7 @@ class JobResponse(BaseModel):
     completed_at: datetime | None = None
     failure_code: str | None = None
     result_available: bool = False
+    can_retry_translation: bool = False
 
 
 class JobListResponse(BaseModel):
