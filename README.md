@@ -67,8 +67,12 @@ area teks yang dideteksi dibuat putih lalu diisi teks Indonesia.
 3. Tekan **Mulai terjemahan** untuk menyetujui penggunaan kuota Gemini API.
 4. Worker mengirim satu halaman per permintaan, memvalidasi JSON kotak teks,
    menampilkan progres per halaman, menempatkan terjemahan Indonesia, dan
-   menyusun PDF hasil. Kegagalan AI yang dapat dipulihkan bisa dicoba ulang dari
-   daftar pekerjaan.
+   menyusun PDF hasil. Worker memproses satu job pada satu waktu, memberi jeda
+   antar-request, dan mencoba ulang error Gemini sementara seperti HTTP 429.
+   Setiap halaman selesai disimpan sebagai checkpoint selama 7 hari. Jika
+   halaman 8 gagal, tombol **Coba terjemahkan lagi** melanjutkan dari halaman 8.
+   Celery Beat membersihkan checkpoint kedaluwarsa setiap hari pukul 03.00 WIB.
+   Batas kuota Gemini yang tetap gagal memerlukan reset kuota atau billing.
 5. Saat status `COMPLETED`, tekan **Download PDF**.
 
 File preview dan hasil tetap berada di `storage/` dan tidak dilacak Git. API key
