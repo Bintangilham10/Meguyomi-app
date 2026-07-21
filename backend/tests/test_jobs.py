@@ -232,6 +232,59 @@ def test_list_returns_uploaded_jobs(authenticated_client: TestClient) -> None:
     assert body["data"][0]["originalFilename"] == "history.pdf"
 
 
+def test_list_paginates_owned_jobs_with_stable_metadata(
+    authenticated_client: TestClient,
+) -> None:
+    job_ids: list[str] = []
+    for index in range(1, 4):
+        upload_response = authenticated_client.post(
+            "/jobs",
+            files={
+                "file": (
+                    f"chapter-{index}.pdf",
+                    make_pdf(),
+                    "application/pdf",
+                )
+            },
+        )
+        job_id = upload_response.json()["id"]
+        job_ids.append(job_id)
+        update_job(
+            job_id,
+            created_at=datetime(2026, 7, index, tzinfo=timezone.utc),
+        )
+
+    first_page = authenticated_client.get("/jobs?page=1&pageSize=2")
+    second_page = authenticated_client.get("/jobs?page=2&pageSize=2")
+
+    assert first_page.status_code == 200
+    assert [job["id"] for job in first_page.json()["data"]] == [
+        job_ids[2],
+        job_ids[1],
+    ]
+    assert first_page.json()["pagination"] == {
+        "page": 1,
+        "pageSize": 2,
+        "totalItems": 3,
+        "totalPages": 2,
+    }
+    assert [job["id"] for job in second_page.json()["data"]] == [job_ids[0]]
+    assert second_page.json()["pagination"]["page"] == 2
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["page=0", "page=10001", "pageSize=0", "pageSize=51"],
+)
+def test_list_rejects_pagination_outside_safe_limits(
+    authenticated_client: TestClient,
+    query: str,
+) -> None:
+    response = authenticated_client.get(f"/jobs?{query}")
+
+    assert response.status_code == 422
+
+
 def test_start_translation_claims_ready_job_once(
     authenticated_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
