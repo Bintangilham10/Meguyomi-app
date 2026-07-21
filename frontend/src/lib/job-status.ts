@@ -58,7 +58,52 @@ export function getJobStatusPresentation(
       tone: "danger",
     };
   }
+  if (status === "FAILED" && failureCode === "AI_NOT_CONFIGURED") {
+    return {
+      label: "AI belum dikonfigurasi",
+      detail: "Isi GEMINI_API_KEY pada server, lalu coba terjemahkan lagi.",
+      tone: "danger",
+    };
+  }
+  if (status === "FAILED" && failureCode === "AI_TRANSLATION_FAILED") {
+    return {
+      label: "Terjemahan AI gagal",
+      detail: "Periksa API key dan kuota Gemini, lalu coba terjemahkan lagi.",
+      tone: "danger",
+    };
+  }
+  if (status === "FAILED" && failureCode === "AI_RATE_LIMITED") {
+    return {
+      label: "Batas Gemini tercapai",
+      detail: "Tunggu reset kuota Gemini atau aktifkan billing, lalu coba lagi.",
+      tone: "danger",
+    };
+  }
+  if (
+    status === "FAILED" &&
+    (failureCode === "RESULT_BUILD_FAILED" ||
+      failureCode === "TRANSLATION_FAILED")
+  ) {
+    return {
+      label: "Terjemahan gagal",
+      detail: "Pemrosesan terhenti. Anda dapat mencoba terjemahan lagi.",
+      tone: "danger",
+    };
+  }
   return presentations[status];
+}
+
+
+export function shouldShowTranslationProgress(
+  status: TranslationJobStatus,
+  translatedPageCount: number,
+): boolean {
+  return (
+    translatedPageCount > 0 &&
+    (status === "TRANSLATION_QUEUED" ||
+      status === "TRANSLATING" ||
+      status === "FAILED")
+  );
 }
 
 
