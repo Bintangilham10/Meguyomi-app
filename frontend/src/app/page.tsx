@@ -3,17 +3,28 @@ import { redirect } from "next/navigation";
 import { JobList } from "@/components/job-list";
 import { UploadForm } from "@/components/upload-form";
 import { getCurrentUser } from "@/lib/auth";
+import { parseJobPage } from "@/lib/job-pagination";
 import { getJobs } from "@/lib/jobs";
 
 import { logoutAction } from "./actions";
 
 
-export default async function Home() {
+interface HomeProps {
+  searchParams: Promise<{ page?: string | string[] }>;
+}
+
+
+export default async function Home({ searchParams }: HomeProps) {
   const user = await getCurrentUser();
   if (!user) {
     redirect("/login");
   }
-  const jobResult = await getJobs();
+  const page = parseJobPage((await searchParams).page);
+  const jobResult = await getJobs(page);
+  const lastPage = Math.max(1, jobResult.pagination.totalPages);
+  if (!jobResult.error && page > lastPage) {
+    redirect(lastPage === 1 ? "/" : `/?page=${lastPage}`);
+  }
 
   return (
     <div className="min-h-screen">
@@ -65,9 +76,13 @@ export default async function Home() {
                 <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">Langkah 02</p>
                 <h2 id="jobs-title" className="mt-2 text-2xl font-semibold">Riwayat pekerjaan</h2>
               </div>
-              <p className="text-sm tabular-nums text-[var(--muted)]">{jobResult.jobs.length} PDF</p>
+              <p className="text-sm tabular-nums text-[var(--muted)]">{jobResult.pagination.totalItems} PDF</p>
             </div>
-            <JobList jobs={jobResult.jobs} error={jobResult.error} />
+            <JobList
+              jobs={jobResult.jobs}
+              pagination={jobResult.pagination}
+              error={jobResult.error}
+            />
           </section>
         </div>
       </main>
