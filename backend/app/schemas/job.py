@@ -30,5 +30,18 @@ class JobResponse(BaseModel):
     can_retry_translation: bool = False
 
 
+class PaginationResponse(BaseModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
+    page: int
+    page_size: int
+    total_items: int
+    total_pages: int
+
+
 class JobListResponse(BaseModel):
     data: list[JobResponse]
+    pagination: PaginationResponse
