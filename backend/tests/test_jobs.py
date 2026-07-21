@@ -346,3 +346,89 @@ def test_download_returns_completed_job_result(
     assert response.headers["content-type"] == "application/pdf"
     assert "chapter-indonesia.pdf" in response.headers["content-disposition"]
     assert response.headers["cache-control"] == "private, no-store"
+
+
+def test_delete_terminal_job_removes_record_and_all_artifacts(
+    authenticated_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("chapter.pdf", make_pdf(), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    preview_directory = tmp_path / "previews" / job_id
+    preview_directory.mkdir(parents=True)
+    (preview_directory / "page-0001.png").write_bytes(b"preview")
+    checkpoint_directory = tmp_path / "temporary" / f"{job_id}.translation"
+    checkpoint_directory.mkdir(parents=True)
+    (checkpoint_directory / "page.part").write_bytes(b"checkpoint")
+    result_path = tmp_path / "results" / f"{job_id}.pdf"
+    result_path.parent.mkdir(parents=True)
+    result_path.write_bytes(make_pdf())
+    update_job(
+        job_id,
+        status=JobStatus.COMPLETED,
+        result_filename=result_path.name,
+    )
+
+    response = authenticated_client.delete(f"/jobs/{job_id}")
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert not (tmp_path / "originals" / f"{job_id}.pdf").exists()
+    assert not preview_directory.exists()
+    assert not checkpoint_directory.exists()
+    assert not result_path.exists()
+    assert authenticated_client.get("/jobs").json()["data"] == []
+
+
+@pytest.mark.parametrize(
+    "job_status",
+    [
+        JobStatus.QUEUED,
+        JobStatus.PROCESSING,
+        JobStatus.TRANSLATION_QUEUED,
+        JobStatus.TRANSLATING,
+    ],
+)
+def test_delete_rejects_active_job_without_removing_source(
+    authenticated_client: TestClient,
+    tmp_path: Path,
+    job_status: str,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("active.pdf", make_pdf(), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    update_job(job_id, status=job_status)
+
+    response = authenticated_client.delete(f"/jobs/{job_id}")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "JOB_ACTIVE"
+    assert (tmp_path / "originals" / f"{job_id}.pdf").is_file()
+    assert len(authenticated_client.get("/jobs").json()["data"]) == 1
+
+
+def test_delete_hides_job_owned_by_another_user(
+    authenticated_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("private.pdf", make_pdf(), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    update_job(
+        job_id,
+        owner_username="another-owner",
+        status=JobStatus.FAILED,
+    )
+
+    response = authenticated_client.delete(f"/jobs/{job_id}")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "JOB_NOT_FOUND"
+    assert (tmp_path / "originals" / f"{job_id}.pdf").is_file()
