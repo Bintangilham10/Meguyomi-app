@@ -4,18 +4,20 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { JobListItem } from "@/components/job-list-item";
+import { JobPagination } from "@/components/job-pagination";
 import { parseApiErrorMessage, parseJobResponse } from "@/lib/job-contract";
 import { shouldRefreshJobStatus } from "@/lib/job-status";
-import type { TranslationJob } from "@/types/job";
+import type { JobPagination as JobPaginationData, TranslationJob } from "@/types/job";
 
 
 interface JobListProps {
   jobs: TranslationJob[];
+  pagination: JobPaginationData;
   error: string | null;
 }
 
 
-export function JobList({ jobs, error }: JobListProps) {
+export function JobList({ jobs, pagination, error }: JobListProps) {
   const router = useRouter();
   const [startingJobId, setStartingJobId] = useState<string | null>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
@@ -127,6 +129,7 @@ export function JobList({ jobs, error }: JobListProps) {
           />
         ))}
       </ol>
+      <JobPagination pagination={pagination} />
     </>
   );
 }
