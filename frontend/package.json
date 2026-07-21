@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --experimental-strip-types src/lib/job-contract.test.ts src/lib/job-deletion.test.ts src/lib/job-status.test.ts src/lib/upload-policy.test.ts"
+    "test": "node --test --experimental-strip-types src/lib/job-contract.test.ts src/lib/job-deletion.test.ts src/lib/job-pagination.test.ts src/lib/job-status.test.ts src/lib/upload-policy.test.ts"
   },
   "dependencies": {
     "next": "16.2.10",
