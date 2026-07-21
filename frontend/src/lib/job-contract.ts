@@ -38,6 +38,10 @@ function isTranslationJob(value: unknown): value is TranslationJob {
   const resultAvailableValid =
     value.resultAvailable === undefined ||
     typeof value.resultAvailable === "boolean";
+  const translatedPageCountValid =
+    Number.isInteger(value.translatedPageCount) &&
+    Number(value.translatedPageCount) >= 0 &&
+    Number(value.translatedPageCount) <= Number(value.pageCount);
 
   return (
     typeof value.id === "string" &&
@@ -48,13 +52,15 @@ function isTranslationJob(value: unknown): value is TranslationJob {
     Number(value.sizeBytes) >= 0 &&
     Number.isInteger(value.pageCount) &&
     Number(value.pageCount) > 0 &&
+    translatedPageCountValid &&
     typeof value.status === "string" &&
     validStatuses.has(value.status) &&
     typeof value.createdAt === "string" &&
     !Number.isNaN(Date.parse(value.createdAt)) &&
     optionalDatesValid &&
     failureCodeValid &&
-    resultAvailableValid
+    resultAvailableValid &&
+    typeof value.canRetryTranslation === "boolean"
   );
 }
 
