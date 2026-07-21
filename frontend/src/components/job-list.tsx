@@ -3,12 +3,9 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import {
-  getJobStatusPresentation,
-  shouldRefreshJobStatus,
-  shouldShowTranslationProgress,
-} from "@/lib/job-status";
+import { JobListItem } from "@/components/job-list-item";
 import { parseApiErrorMessage, parseJobResponse } from "@/lib/job-contract";
+import { shouldRefreshJobStatus } from "@/lib/job-status";
 import type { TranslationJob } from "@/types/job";
 
 
@@ -18,24 +15,10 @@ interface JobListProps {
 }
 
 
-const dateFormatter = new Intl.DateTimeFormat("id-ID", {
-  dateStyle: "medium",
-  timeStyle: "short",
-  timeZone: "Asia/Jakarta",
-});
-
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024 * 1024) {
-    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  }
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-
 export function JobList({ jobs, error }: JobListProps) {
   const router = useRouter();
   const [startingJobId, setStartingJobId] = useState<string | null>(null);
+  const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const hasActiveJobs = jobs.some((job) => shouldRefreshJobStatus(job.status));
 
@@ -62,6 +45,35 @@ export function JobList({ jobs, error }: JobListProps) {
       setActionError("Layanan terjemahan AI sedang tidak tersedia.");
     } finally {
       setStartingJobId(null);
+    }
+  }
+
+  async function deleteJob(job: TranslationJob) {
+    const confirmed = window.confirm(
+      `Hapus ${job.originalFilename} beserta seluruh file hasilnya?`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingJobId(job.id);
+    setActionError(null);
+    try {
+      const response = await fetch(`/api/jobs/${job.id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        const body: unknown = await response.json().catch(() => null);
+        setActionError(
+          parseApiErrorMessage(body, "Pekerjaan belum dapat dihapus."),
+        );
+        return;
+      }
+      router.refresh();
+    } catch {
+      setActionError("Layanan penghapusan sedang tidak tersedia.");
+    } finally {
+      setDeletingJobId(null);
     }
   }
 
@@ -104,100 +116,16 @@ export function JobList({ jobs, error }: JobListProps) {
         aria-live="polite"
         className="mt-6 divide-y divide-[var(--border)] border-y border-[var(--border)]"
       >
-      {jobs.map((job) => {
-        const presentation = getJobStatusPresentation(job.status, job.failureCode);
-        const canStartTranslation =
-          job.status === "READY_FOR_TRANSLATION" || job.canRetryTranslation;
-        const statusClass =
-          presentation.tone === "danger"
-            ? "border-[var(--danger)] text-[var(--danger)]"
-            : "border-[var(--accent-soft)] text-[var(--accent-strong)]";
-
-        return (
-          <li
+        {jobs.map((job) => (
+          <JobListItem
             key={job.id}
-            className="grid gap-4 py-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-          >
-            <div className="min-w-0">
-              <p className="truncate font-semibold" title={job.originalFilename}>
-                {job.originalFilename}
-              </p>
-              <p className="mt-1 text-sm text-[var(--muted)]">
-                {job.pageCount} halaman · {formatBytes(job.sizeBytes)} ·{" "}
-                {dateFormatter.format(new Date(job.createdAt))}
-              </p>
-              {shouldShowTranslationProgress(
-                job.status,
-                job.translatedPageCount,
-              ) ? (
-                <div className="mt-3 max-w-xs">
-                  <div className="flex justify-between gap-4 text-xs text-[var(--muted)]">
-                    <span>
-                      {job.status === "FAILED"
-                        ? "Checkpoint tersimpan"
-                        : job.status === "TRANSLATION_QUEUED"
-                          ? "Akan dilanjutkan"
-                          : "Progres terjemahan"}
-                    </span>
-                    <span>
-                      {job.translatedPageCount}/{job.pageCount} halaman
-                    </span>
-                  </div>
-                  <progress
-                    aria-label={`Terjemahan ${job.originalFilename}`}
-                    className="mt-1 h-2 w-full accent-[var(--accent)]"
-                    max={job.pageCount}
-                    value={job.translatedPageCount}
-                  />
-                </div>
-              ) : null}
-            </div>
-            <div className="flex flex-col items-start gap-2 sm:items-end">
-              <p
-                className={`inline-flex w-fit items-center gap-2 border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.1em] ${statusClass}`}
-              >
-                <span
-                  className={
-                    presentation.tone === "danger"
-                      ? "h-2 w-2 bg-[var(--danger)]"
-                      : "h-2 w-2 bg-[var(--accent)]"
-                  }
-                  aria-hidden="true"
-                />
-                {presentation.label}
-                <span className="sr-only">: {presentation.detail}</span>
-              </p>
-              {job.status === "FAILED" ? (
-                <p className="max-w-xs text-left text-xs leading-5 text-[var(--muted)] sm:text-right">
-                  {presentation.detail}
-                </p>
-              ) : null}
-              {canStartTranslation ? (
-                <button
-                  type="button"
-                  disabled={startingJobId === job.id}
-                  onClick={() => startTranslation(job.id)}
-                  className="border border-[var(--accent)] px-3 py-2 text-xs font-semibold text-[var(--accent-strong)] transition hover:bg-[var(--accent)] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {startingJobId === job.id
-                    ? "Mengantrekan..."
-                    : job.canRetryTranslation
-                      ? "Coba terjemahkan lagi"
-                      : "Mulai terjemahan"}
-                </button>
-              ) : null}
-              {job.status === "COMPLETED" && job.resultAvailable ? (
-                <a
-                  href={`/api/jobs/${job.id}/result`}
-                  className="bg-[var(--accent)] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[var(--accent-strong)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
-                >
-                  Download PDF
-                </a>
-              ) : null}
-            </div>
-          </li>
-        );
-      })}
+            job={job}
+            isDeleting={deletingJobId === job.id}
+            isStarting={startingJobId === job.id}
+            onDelete={deleteJob}
+            onStartTranslation={startTranslation}
+          />
+        ))}
       </ol>
     </>
   );
