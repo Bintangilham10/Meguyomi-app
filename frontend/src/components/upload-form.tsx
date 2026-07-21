@@ -86,7 +86,7 @@ export function UploadForm() {
         kind: "success",
         message: "PDF diterima dan masuk ke antrean pekerjaan.",
       });
-      router.refresh();
+      router.replace("/");
     } catch {
       setFeedback({
         kind: "error",
