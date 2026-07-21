@@ -13,6 +13,7 @@ export interface TranslationJob {
   originalFilename: string;
   sizeBytes: number;
   pageCount: number;
+  translatedPageCount: number;
   status: TranslationJobStatus;
   createdAt: string;
   startedAt?: string | null;
@@ -21,4 +22,5 @@ export interface TranslationJob {
   completedAt?: string | null;
   failureCode?: string | null;
   resultAvailable?: boolean;
+  canRetryTranslation: boolean;
 }
