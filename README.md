@@ -74,6 +74,8 @@ area teks yang dideteksi dibuat putih lalu diisi teks Indonesia.
    Celery Beat membersihkan checkpoint kedaluwarsa setiap hari pukul 03.00 WIB.
    Batas kuota Gemini yang tetap gagal memerlukan reset kuota atau billing.
 5. Saat status `COMPLETED`, tekan **Download PDF**.
+6. Job yang sudah siap, selesai, atau gagal dapat dihapus dari riwayat. Tindakan
+   ini juga menghapus PDF asli, preview, checkpoint, dan PDF hasil dari storage.
 
 File preview dan hasil tetap berada di `storage/` dan tidak dilacak Git. API key
 hanya disimpan di `.env`; jangan menaruh key asli di `.env.example` atau commit.
