@@ -38,14 +38,23 @@ function forwardResponse(response: Response): Response {
 }
 
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   const headers = await getSessionHeader();
   if (!headers) {
     return apiError(401, "NOT_AUTHENTICATED", "Sesi login tidak valid.");
   }
 
   try {
-    const response = await fetch(`${getApiUrl()}/jobs`, {
+    const requestUrl = new URL(request.url);
+    const query = new URLSearchParams();
+    for (const name of ["page", "pageSize"]) {
+      const value = requestUrl.searchParams.get(name);
+      if (value !== null) {
+        query.set(name, value);
+      }
+    }
+    const suffix = query.size > 0 ? `?${query}` : "";
+    const response = await fetch(`${getApiUrl()}/jobs${suffix}`, {
       headers,
       cache: "no-store",
     });
