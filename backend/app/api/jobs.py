@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, Response, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
@@ -19,6 +19,7 @@ from app.models.translation_job import (
 )
 from app.models.job_status import JobStatus
 from app.schemas.job import JobListResponse, JobResponse
+from app.services.job_artifacts import JobArtifactRemovalError, remove_job_artifacts
 from app.services.pdf_upload import UploadValidationError, validate_and_store_pdf
 from app.tasks.preparation import dispatch_preparation_job
 from app.tasks.translation import dispatch_translation_job
@@ -26,6 +27,13 @@ from app.tasks.translation import dispatch_translation_job
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 logger = logging.getLogger(__name__)
+DELETABLE_JOB_STATUSES = frozenset(
+    {
+        JobStatus.READY_FOR_TRANSLATION,
+        JobStatus.COMPLETED,
+        JobStatus.FAILED,
+    }
+)
 
 
 def api_error(status_code: int, code: str, message: str) -> JSONResponse:
@@ -104,6 +112,69 @@ def list_jobs(
         .order_by(TranslationJob.created_at.desc())
     ).all()
     return JobListResponse(data=[JobResponse.model_validate(job) for job in jobs])
+
+
+@router.delete(
+    "/{job_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+def delete_job(
+    job_id: UUID,
+    username: AuthenticatedUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> Response | JSONResponse:
+    normalized_job_id = str(job_id)
+    job = db.scalar(
+        select(TranslationJob)
+        .where(
+            TranslationJob.id == normalized_job_id,
+            TranslationJob.owner_username == username,
+        )
+        .with_for_update()
+    )
+    if job is None:
+        return api_error(
+            status.HTTP_404_NOT_FOUND,
+            "JOB_NOT_FOUND",
+            "Pekerjaan terjemahan tidak ditemukan.",
+        )
+    if job.status not in DELETABLE_JOB_STATUSES:
+        return api_error(
+            status.HTTP_409_CONFLICT,
+            "JOB_ACTIVE",
+            "Pekerjaan yang sedang diproses belum dapat dihapus.",
+        )
+
+    try:
+        remove_job_artifacts(get_settings(), job.id)
+    except JobArtifactRemovalError:
+        db.rollback()
+        logger.exception(
+            json.dumps(
+                {
+                    "event": "job_artifact_removal_failed",
+                    "jobId": job.id,
+                }
+            )
+        )
+        return api_error(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "JOB_DELETE_FAILED",
+            "Pekerjaan belum dapat dihapus dari penyimpanan.",
+        )
+
+    db.delete(job)
+    db.commit()
+    logger.info(
+        json.dumps(
+            {
+                "event": "job_deleted",
+                "jobId": normalized_job_id,
+            }
+        )
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
