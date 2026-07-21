@@ -77,6 +77,9 @@ area teks yang dideteksi dibuat putih lalu diisi teks Indonesia.
 6. Job yang sudah siap, selesai, atau gagal dapat dihapus dari riwayat. Tindakan
    ini juga menghapus PDF asli, preview, checkpoint, dan PDF hasil dari storage.
 
+Riwayat ditampilkan 10 job per halaman agar dashboard tetap ringan ketika jumlah
+PDF bertambah.
+
 File preview dan hasil tetap berada di `storage/` dan tidak dilacak Git. API key
 hanya disimpan di `.env`; jangan menaruh key asli di `.env.example` atau commit.
 
