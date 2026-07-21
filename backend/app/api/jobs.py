@@ -4,9 +4,9 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -18,7 +18,7 @@ from app.models.translation_job import (
     TranslationJob,
 )
 from app.models.job_status import JobStatus
-from app.schemas.job import JobListResponse, JobResponse
+from app.schemas.job import JobListResponse, JobResponse, PaginationResponse
 from app.services.job_artifacts import JobArtifactRemovalError, remove_job_artifacts
 from app.services.pdf_upload import UploadValidationError, validate_and_store_pdf
 from app.tasks.preparation import dispatch_preparation_job
@@ -105,13 +105,30 @@ async def create_job(
 def list_jobs(
     username: AuthenticatedUser,
     db: Annotated[Session, Depends(get_db)],
+    page: Annotated[int, Query(ge=1, le=10_000)] = 1,
+    page_size: Annotated[int, Query(alias="pageSize", ge=1, le=50)] = 10,
 ) -> JobListResponse:
+    total_items = db.scalar(
+        select(func.count())
+        .select_from(TranslationJob)
+        .where(TranslationJob.owner_username == username)
+    ) or 0
     jobs = db.scalars(
         select(TranslationJob)
         .where(TranslationJob.owner_username == username)
-        .order_by(TranslationJob.created_at.desc())
+        .order_by(TranslationJob.created_at.desc(), TranslationJob.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     ).all()
-    return JobListResponse(data=[JobResponse.model_validate(job) for job in jobs])
+    return JobListResponse(
+        data=[JobResponse.model_validate(job) for job in jobs],
+        pagination=PaginationResponse(
+            page=page,
+            page_size=page_size,
+            total_items=total_items,
+            total_pages=(total_items + page_size - 1) // page_size,
+        ),
+    )
 
 
 @router.delete(
