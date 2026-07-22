@@ -19,9 +19,18 @@ const validJob = {
   createdAt: "2026-07-14T01:30:00Z",
 };
 
+const validPagination = {
+  page: 1,
+  pageSize: 10,
+  totalItems: 1,
+  totalPages: 1,
+};
+
 
 test("parseJobListResponse accepts a valid backend response", () => {
-  assert.deepEqual(parseJobListResponse({ data: [validJob] }), [validJob]);
+  const response = { data: [validJob], pagination: validPagination };
+
+  assert.deepEqual(parseJobListResponse(response), response);
 });
 
 
@@ -42,29 +51,66 @@ test("parseJobListResponse accepts every preparation status", () => {
     "FAILED",
   ]) {
     const job = { ...validJob, status, resultAvailable: status === "COMPLETED" };
-    assert.deepEqual(parseJobListResponse({ data: [job] }), [job]);
+    const response = { data: [job], pagination: validPagination };
+    assert.deepEqual(parseJobListResponse(response), response);
   }
 });
 
 
 test("parseJobListResponse rejects malformed job data", () => {
   assert.equal(
-    parseJobListResponse({ data: [{ ...validJob, pageCount: "12" }] }),
+    parseJobListResponse({
+      data: [{ ...validJob, pageCount: "12" }],
+      pagination: validPagination,
+    }),
     null,
   );
   assert.equal(
-    parseJobListResponse({ data: [{ ...validJob, translatedPageCount: -1 }] }),
+    parseJobListResponse({
+      data: [{ ...validJob, translatedPageCount: -1 }],
+      pagination: validPagination,
+    }),
     null,
   );
   assert.equal(
-    parseJobListResponse({ data: [{ ...validJob, translatedPageCount: 13 }] }),
+    parseJobListResponse({
+      data: [{ ...validJob, translatedPageCount: 13 }],
+      pagination: validPagination,
+    }),
     null,
   );
   assert.equal(
-    parseJobListResponse({ data: [{ ...validJob, canRetryTranslation: "yes" }] }),
+    parseJobListResponse({
+      data: [{ ...validJob, canRetryTranslation: "yes" }],
+      pagination: validPagination,
+    }),
     null,
   );
-  assert.equal(parseJobListResponse({ data: "not-an-array" }), null);
+  assert.equal(
+    parseJobListResponse({ data: "not-an-array", pagination: validPagination }),
+    null,
+  );
+  assert.equal(
+    parseJobListResponse({
+      data: [validJob],
+      pagination: { ...validPagination, totalPages: 2 },
+    }),
+    null,
+  );
+  assert.equal(
+    parseJobListResponse({
+      data: [validJob],
+      pagination: { ...validPagination, pageSize: 0 },
+    }),
+    null,
+  );
+  assert.equal(
+    parseJobListResponse({
+      data: [validJob],
+      pagination: { ...validPagination, page: "1" },
+    }),
+    null,
+  );
 });
 
 
