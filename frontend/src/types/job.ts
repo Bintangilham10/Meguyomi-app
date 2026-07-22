@@ -24,3 +24,17 @@ export interface TranslationJob {
   resultAvailable?: boolean;
   canRetryTranslation: boolean;
 }
+
+
+export interface JobPagination {
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+}
+
+
+export interface TranslationJobList {
+  data: TranslationJob[];
+  pagination: JobPagination;
+}
