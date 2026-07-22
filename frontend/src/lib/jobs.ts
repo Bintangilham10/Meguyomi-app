@@ -2,12 +2,26 @@ import { cookies } from "next/headers";
 
 import { SESSION_COOKIE_NAME } from "@/lib/auth";
 import { parseJobListResponse } from "@/lib/job-contract";
-import type { TranslationJob } from "@/types/job";
+import type { JobPagination, TranslationJob } from "@/types/job";
 
 
 export interface JobListResult {
   jobs: TranslationJob[];
+  pagination: JobPagination;
   error: string | null;
+}
+
+
+const JOB_PAGE_SIZE = 10;
+
+
+function emptyPagination(page: number): JobPagination {
+  return {
+    page,
+    pageSize: JOB_PAGE_SIZE,
+    totalItems: 0,
+    totalPages: 0,
+  };
 }
 
 
@@ -16,27 +30,51 @@ function getApiUrl(): string {
 }
 
 
-export async function getJobs(): Promise<JobListResult> {
+export async function getJobs(page: number): Promise<JobListResult> {
   const session = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
   if (!session) {
-    return { jobs: [], error: "Sesi login tidak valid." };
+    return {
+      jobs: [],
+      pagination: emptyPagination(page),
+      error: "Sesi login tidak valid.",
+    };
   }
 
   try {
-    const response = await fetch(`${getApiUrl()}/jobs`, {
+    const query = new URLSearchParams({
+      page: String(page),
+      pageSize: String(JOB_PAGE_SIZE),
+    });
+    const response = await fetch(`${getApiUrl()}/jobs?${query}`, {
       headers: { Cookie: `${SESSION_COOKIE_NAME}=${session}` },
       cache: "no-store",
     });
     if (!response.ok) {
-      return { jobs: [], error: "Riwayat pekerjaan tidak dapat dimuat." };
+      return {
+        jobs: [],
+        pagination: emptyPagination(page),
+        error: "Riwayat pekerjaan tidak dapat dimuat.",
+      };
     }
 
-    const jobs = parseJobListResponse(await response.json());
-    if (!jobs) {
-      return { jobs: [], error: "Respons riwayat pekerjaan tidak valid." };
+    const result = parseJobListResponse(await response.json());
+    if (!result) {
+      return {
+        jobs: [],
+        pagination: emptyPagination(page),
+        error: "Respons riwayat pekerjaan tidak valid.",
+      };
     }
-    return { jobs, error: null };
+    return {
+      jobs: result.data,
+      pagination: result.pagination,
+      error: null,
+    };
   } catch {
-    return { jobs: [], error: "Layanan riwayat sedang tidak tersedia." };
+    return {
+      jobs: [],
+      pagination: emptyPagination(page),
+      error: "Layanan riwayat sedang tidak tersedia.",
+    };
   }
 }
