@@ -1,4 +1,8 @@
-import type { TranslationJob } from "@/types/job";
+import type {
+  JobPagination,
+  TranslationJob,
+  TranslationJobList,
+} from "@/types/job";
 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -65,11 +69,54 @@ function isTranslationJob(value: unknown): value is TranslationJob {
 }
 
 
-export function parseJobListResponse(value: unknown): TranslationJob[] | null {
-  if (!isRecord(value) || !Array.isArray(value.data)) {
+function isJobPagination(value: unknown): value is JobPagination {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    typeof value.page !== "number" ||
+    typeof value.pageSize !== "number" ||
+    typeof value.totalItems !== "number" ||
+    typeof value.totalPages !== "number"
+  ) {
+    return false;
+  }
+  const { page, pageSize, totalItems, totalPages } = value;
+  return (
+    Number.isInteger(page) &&
+    page >= 1 &&
+    page <= 10_000 &&
+    Number.isInteger(pageSize) &&
+    pageSize >= 1 &&
+    pageSize <= 50 &&
+    Number.isInteger(totalItems) &&
+    totalItems >= 0 &&
+    Number.isInteger(totalPages) &&
+    totalPages === Math.ceil(totalItems / pageSize)
+  );
+}
+
+
+export function parseJobListResponse(
+  value: unknown,
+): TranslationJobList | null {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.data) ||
+    !isJobPagination(value.pagination)
+  ) {
     return null;
   }
-  return value.data.every(isTranslationJob) ? value.data : null;
+  if (
+    value.data.length > value.pagination.pageSize ||
+    !value.data.every(isTranslationJob)
+  ) {
+    return null;
+  }
+  return {
+    data: value.data,
+    pagination: value.pagination,
+  };
 }
 
 
