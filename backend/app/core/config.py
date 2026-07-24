@@ -1,8 +1,12 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+RetryDelaySeconds = Annotated[int, Field(ge=1, le=86_400)]
 
 
 class Settings(BaseSettings):
@@ -46,7 +50,7 @@ class Settings(BaseSettings):
         ge=0.0,
         le=300.0,
     )
-    gemini_max_retries: int = Field(default=5, ge=0, le=10)
+    gemini_max_retries: int = Field(default=1, ge=0, le=10)
     gemini_retry_base_delay_seconds: float = Field(
         default=5.0,
         ge=0.1,
@@ -56,6 +60,54 @@ class Settings(BaseSettings):
         default=60.0,
         ge=1.0,
         le=300.0,
+    )
+    gemini_inline_retry_max_delay_seconds: float = Field(
+        default=15.0,
+        ge=0.1,
+        le=300.0,
+    )
+    gemini_service_retry_delays_seconds: tuple[
+        RetryDelaySeconds,
+        RetryDelaySeconds,
+        RetryDelaySeconds,
+    ] = (
+        60,
+        300,
+        900,
+    )
+    gemini_rate_limit_retry_delays_seconds: tuple[
+        RetryDelaySeconds,
+        RetryDelaySeconds,
+        RetryDelaySeconds,
+    ] = (
+        60,
+        900,
+        3_600,
+    )
+    gemini_retry_hint_max_seconds: int = Field(
+        default=86_400,
+        ge=60,
+        le=604_800,
+    )
+    gemini_deferred_retry_jitter_ratio: float = Field(
+        default=0.25,
+        ge=0.0,
+        le=1.0,
+    )
+    gemini_deferred_retry_jitter_max_seconds: float = Field(
+        default=60.0,
+        ge=0.0,
+        le=600.0,
+    )
+    translation_heartbeat_timeout_seconds: int = Field(
+        default=300,
+        ge=60,
+        le=3_600,
+    )
+    translation_queue_recovery_delay_seconds: int = Field(
+        default=60,
+        ge=1,
+        le=3_600,
     )
     translation_checkpoint_retention_days: int = Field(
         default=7,
