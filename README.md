@@ -11,6 +11,9 @@ preview, integrasi Gemini Vision untuk OCR sekaligus terjemahan, penyusunan PDF
 hasil, dan download privat. Penggantian teks masih menggunakan kompositor MVP:
 area teks yang dideteksi dibuat putih lalu diisi teks Indonesia.
 
+Task retry dan watchdog berjalan pada worker maintenance terpisah agar tetap
+aktif ketika worker terjemahan sedang memproses bab panjang.
+
 ## Struktur proyek
 
 - `frontend/` — aplikasi web Next.js dan aset publik.
@@ -68,14 +71,22 @@ area teks yang dideteksi dibuat putih lalu diisi teks Indonesia.
 4. Worker mengirim satu halaman per permintaan, memvalidasi JSON kotak teks,
    menampilkan progres per halaman, menempatkan terjemahan Indonesia, dan
    menyusun PDF hasil. Worker memproses satu job pada satu waktu, memberi jeda
-   antar-request, dan mencoba ulang error Gemini sementara seperti HTTP 429.
+   antar-request, dan mencoba ulang satu kali error Gemini yang sangat singkat.
+   HTTP 429, HTTP 5xx, timeout, dan gangguan koneksi yang lebih lama dipindahkan
+   ke status `TRANSLATION_RETRY_WAIT` agar worker dapat mengerjakan job lain.
+   Retry tertunda memakai hint `Retry-After`, jitter, dan jadwal 1/5/15 menit
+   untuk gangguan layanan atau 1/15/60 menit untuk rate limit. Dashboard
+   menampilkan alasan serta waktu percobaan berikutnya dalam WIB.
    Setiap halaman selesai disimpan sebagai checkpoint selama 7 hari. Jika
    halaman 8 gagal, tombol **Coba terjemahkan lagi** melanjutkan dari halaman 8.
-   Celery Beat membersihkan checkpoint kedaluwarsa setiap hari pukul 03.00 WIB.
-   Batas kuota Gemini yang tetap gagal memerlukan reset kuota atau billing.
+   Celery Beat memulihkan worker yang berhenti, mengantrekan retry jatuh tempo,
+   dan membersihkan checkpoint kedaluwarsa setiap hari pukul 03.00 WIB. Setelah
+   tiga retry tertunda gagal, pengguna masih dapat mencoba ulang secara manual.
+   Kuota harian yang benar-benar habis tetap memerlukan reset kuota atau billing.
 5. Saat status `COMPLETED`, tekan **Download PDF**.
-6. Job yang sudah siap, selesai, atau gagal dapat dihapus dari riwayat. Tindakan
-   ini juga menghapus PDF asli, preview, checkpoint, dan PDF hasil dari storage.
+6. Job yang sudah siap, sedang menunggu retry, selesai, atau gagal dapat dihapus
+   dari riwayat. Tindakan ini juga menghapus PDF asli, preview, checkpoint, dan
+   PDF hasil dari storage.
 
 Riwayat ditampilkan 10 job per halaman agar dashboard tetap ringan ketika jumlah
 PDF bertambah.
