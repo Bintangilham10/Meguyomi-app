@@ -1,11 +1,12 @@
 import json
 import logging
+import random
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from shutil import rmtree
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
@@ -15,9 +16,12 @@ from app.models.translation_job import TranslationJob
 from app.tasks.celery_app import celery_app
 from app.tasks.preparation import normalize_job_id
 from app.tasks.translation import checkpoint_is_expired, resolve_checkpoint_directory
+from app.tasks.translation import dispatch_translation_job
 
 
 SessionFactory = Callable[[], Session]
+Dispatcher = Callable[[str], None]
+RetryJitter = Callable[[float, float], float]
 logger = logging.getLogger(__name__)
 
 
@@ -113,6 +117,142 @@ def cleanup_translation_checkpoints(
 @celery_app.task(name="meguyomi.cleanup_translation_checkpoints")
 def cleanup_translation_checkpoints_task() -> dict[str, int]:
     return cleanup_translation_checkpoints(
+        SessionLocal,
+        get_settings(),
+    )
+
+
+def _queue_recovery_delay(
+    settings: Settings,
+    jitter: RetryJitter,
+) -> float:
+    base_delay = float(settings.translation_queue_recovery_delay_seconds)
+    jitter_limit = min(
+        settings.gemini_deferred_retry_jitter_max_seconds,
+        base_delay * settings.gemini_deferred_retry_jitter_ratio,
+    )
+    jitter_seconds = min(
+        jitter_limit,
+        max(0.0, jitter(0.0, jitter_limit)),
+    )
+    return base_delay + jitter_seconds
+
+
+def recover_translation_jobs(
+    session_factory: SessionFactory,
+    settings: Settings,
+    *,
+    dispatch: Dispatcher = dispatch_translation_job,
+    now: datetime | None = None,
+    jitter: RetryJitter = random.uniform,
+) -> dict[str, int]:
+    reference_time = now or datetime.now(timezone.utc)
+    stale_before = reference_time - timedelta(
+        seconds=settings.translation_heartbeat_timeout_seconds
+    )
+    counts = {"recovered": 0, "dispatched": 0, "dispatchFailed": 0}
+
+    with session_factory() as session:
+        stale_jobs = session.scalars(
+            select(TranslationJob)
+            .where(
+                TranslationJob.status == JobStatus.TRANSLATING,
+                or_(
+                    TranslationJob.translation_heartbeat_at <= stale_before,
+                    and_(
+                        TranslationJob.translation_heartbeat_at.is_(None),
+                        TranslationJob.translation_started_at.is_not(None),
+                        TranslationJob.translation_started_at <= stale_before,
+                    ),
+                ),
+            )
+            .order_by(TranslationJob.translation_heartbeat_at.asc())
+            .limit(100)
+            .with_for_update(skip_locked=True)
+        ).all()
+        for job in stale_jobs:
+            delay = _queue_recovery_delay(settings, jitter)
+            job.status = JobStatus.TRANSLATION_RETRY_WAIT
+            job.translation_next_retry_at = reference_time + timedelta(
+                seconds=delay
+            )
+            job.translation_wait_reason = "worker_recovery"
+            job.translation_heartbeat_at = None
+            job.failure_code = None
+            counts["recovered"] += 1
+        session.commit()
+
+    with session_factory() as session:
+        due_jobs = session.scalars(
+            select(TranslationJob)
+            .where(
+                TranslationJob.status == JobStatus.TRANSLATION_RETRY_WAIT,
+                TranslationJob.translation_next_retry_at.is_not(None),
+                TranslationJob.translation_next_retry_at <= reference_time,
+            )
+            .order_by(TranslationJob.translation_next_retry_at.asc())
+            .limit(100)
+            .with_for_update(skip_locked=True)
+        ).all()
+        due_job_ids = [job.id for job in due_jobs]
+        for job in due_jobs:
+            job.status = JobStatus.TRANSLATION_QUEUED
+            job.translation_next_retry_at = None
+            job.translation_wait_reason = None
+            job.translation_heartbeat_at = None
+        session.commit()
+
+    for job_id in due_job_ids:
+        try:
+            dispatch(job_id)
+        except Exception:
+            logger.exception(
+                json.dumps(
+                    {
+                        "event": "translation_retry_dispatch_failed",
+                        "jobId": job_id,
+                    }
+                )
+            )
+            failed_at = now or datetime.now(timezone.utc)
+            delay = _queue_recovery_delay(settings, jitter)
+            with session_factory() as session:
+                result = session.execute(
+                    update(TranslationJob)
+                    .where(
+                        TranslationJob.id == job_id,
+                        TranslationJob.status == JobStatus.TRANSLATION_QUEUED,
+                    )
+                    .values(
+                        status=JobStatus.TRANSLATION_RETRY_WAIT,
+                        translation_next_retry_at=failed_at
+                        + timedelta(seconds=delay),
+                        translation_wait_reason="queue_unavailable",
+                        translation_heartbeat_at=None,
+                    )
+                )
+                session.commit()
+                if result.rowcount == 1:
+                    counts["dispatchFailed"] += 1
+            continue
+        counts["dispatched"] += 1
+
+    logger.info(
+        json.dumps(
+            {
+                "event": "translation_retry_recovery_completed",
+                "recoveredJobs": counts["recovered"],
+                "dispatchedJobs": counts["dispatched"],
+                "dispatchFailedJobs": counts["dispatchFailed"],
+            }
+        )
+    )
+    return counts
+
+
+@celery_app.task(name="meguyomi.recover_translation_jobs")
+def recover_translation_jobs_task() -> dict[str, int]:
+    return recover_translation_jobs(
         SessionLocal,
         get_settings(),
     )
