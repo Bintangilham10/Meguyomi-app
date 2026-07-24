@@ -1,5 +1,6 @@
 import json
 import logging
+import random
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -7,7 +8,7 @@ from shutil import rmtree
 from typing import Protocol
 
 from PIL import Image
-from sqlalchemy import update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
@@ -29,6 +30,7 @@ from app.tasks.preparation import normalize_job_id
 
 
 SessionFactory = Callable[[], Session]
+RetryJitter = Callable[[float, float], float]
 logger = logging.getLogger(__name__)
 
 
@@ -36,10 +38,28 @@ class PageTranslator(Protocol):
     def translate_page(self, page_path: Path) -> PageTranslation: ...
 
 
+class TranslationClaimLost(Exception):
+    pass
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def get_translation_job_status(
+    job_id: str,
+    session_factory: SessionFactory,
+) -> str:
+    with session_factory() as session:
+        job = session.get(TranslationJob, job_id)
+        return job.status if job is not None else "JOB_NOT_FOUND"
+
+
 def claim_translation_job(
     job_id: str,
     session_factory: SessionFactory,
 ) -> TranslationJob | None:
+    claimed_at = utc_now()
     with session_factory() as session:
         result = session.execute(
             update(TranslationJob)
@@ -54,7 +74,13 @@ def claim_translation_job(
             )
             .values(
                 status=JobStatus.TRANSLATING,
-                translation_started_at=datetime.now(timezone.utc),
+                translation_started_at=func.coalesce(
+                    TranslationJob.translation_started_at,
+                    claimed_at,
+                ),
+                translation_heartbeat_at=claimed_at,
+                translation_next_retry_at=None,
+                translation_wait_reason=None,
                 completed_at=None,
                 result_filename=None,
                 failure_code=None,
@@ -82,7 +108,13 @@ def fail_queued_translation_job(
                 TranslationJob.id == normalized_job_id,
                 TranslationJob.status == JobStatus.TRANSLATION_QUEUED,
             )
-            .values(status=JobStatus.FAILED, failure_code=failure_code)
+            .values(
+                status=JobStatus.FAILED,
+                failure_code=failure_code,
+                translation_next_retry_at=None,
+                translation_wait_reason=None,
+                translation_heartbeat_at=None,
+            )
         )
         session.commit()
         if result.rowcount == 1:
@@ -95,9 +127,10 @@ def record_translation_progress(
     job_id: str,
     session_factory: SessionFactory,
     translated_page_count: int,
-) -> None:
+) -> bool:
+    recorded_at = utc_now()
     with session_factory() as session:
-        session.execute(
+        result = session.execute(
             update(TranslationJob)
             .where(
                 TranslationJob.id == job_id,
@@ -105,10 +138,15 @@ def record_translation_progress(
             )
             .values(
                 translated_page_count=translated_page_count,
-                checkpoint_updated_at=datetime.now(timezone.utc),
+                checkpoint_updated_at=recorded_at,
+                translation_retry_attempt=0,
+                translation_next_retry_at=None,
+                translation_wait_reason=None,
+                translation_heartbeat_at=recorded_at,
             )
         )
         session.commit()
+        return result.rowcount == 1
 
 
 def synchronize_translation_progress(
@@ -116,9 +154,9 @@ def synchronize_translation_progress(
     session_factory: SessionFactory,
     translated_page_count: int,
     checkpoint_updated_at: datetime | None,
-) -> None:
+) -> bool:
     with session_factory() as session:
-        session.execute(
+        result = session.execute(
             update(TranslationJob)
             .where(
                 TranslationJob.id == job_id,
@@ -127,18 +165,42 @@ def synchronize_translation_progress(
             .values(
                 translated_page_count=translated_page_count,
                 checkpoint_updated_at=checkpoint_updated_at,
+                translation_retry_attempt=0 if translated_page_count else (
+                    TranslationJob.translation_retry_attempt
+                ),
+                translation_next_retry_at=None,
+                translation_wait_reason=None,
+                translation_heartbeat_at=utc_now(),
             )
         )
         session.commit()
+        return result.rowcount == 1
+
+
+def touch_translation_heartbeat(
+    job_id: str,
+    session_factory: SessionFactory,
+) -> bool:
+    with session_factory() as session:
+        result = session.execute(
+            update(TranslationJob)
+            .where(
+                TranslationJob.id == job_id,
+                TranslationJob.status == JobStatus.TRANSLATING,
+            )
+            .values(translation_heartbeat_at=utc_now())
+        )
+        session.commit()
+        return result.rowcount == 1
 
 
 def mark_translation_failed(
     job_id: str,
     session_factory: SessionFactory,
     failure_code: str,
-) -> None:
+) -> bool:
     with session_factory() as session:
-        session.execute(
+        result = session.execute(
             update(TranslationJob)
             .where(
                 TranslationJob.id == job_id,
@@ -149,18 +211,22 @@ def mark_translation_failed(
                 completed_at=None,
                 result_filename=None,
                 failure_code=failure_code,
+                translation_next_retry_at=None,
+                translation_wait_reason=None,
+                translation_heartbeat_at=None,
             )
         )
         session.commit()
+        return result.rowcount == 1
 
 
 def mark_translation_completed(
     job_id: str,
     session_factory: SessionFactory,
     result_filename: str,
-) -> None:
+) -> bool:
     with session_factory() as session:
-        session.execute(
+        result = session.execute(
             update(TranslationJob)
             .where(
                 TranslationJob.id == job_id,
@@ -172,9 +238,98 @@ def mark_translation_completed(
                 result_filename=result_filename,
                 failure_code=None,
                 checkpoint_updated_at=None,
+                translation_retry_attempt=0,
+                translation_next_retry_at=None,
+                translation_wait_reason=None,
+                translation_heartbeat_at=None,
             )
         )
         session.commit()
+        return result.rowcount == 1
+
+
+def is_deferred_gemini_error(error: GeminiTranslationError) -> bool:
+    if error.http_status in {408, 429}:
+        return True
+    if error.http_status is not None:
+        return 500 <= error.http_status < 600
+    return error.retryable
+
+
+def defer_translation_retry(
+    job_id: str,
+    session_factory: SessionFactory,
+    settings: Settings,
+    error: GeminiTranslationError,
+    *,
+    now: datetime | None = None,
+    jitter: RetryJitter = random.uniform,
+) -> bool:
+    reference_time = now or utc_now()
+    wait_reason = (
+        "rate_limited" if error.http_status == 429 else "service_unavailable"
+    )
+    schedule = (
+        settings.gemini_rate_limit_retry_delays_seconds
+        if error.http_status == 429
+        else settings.gemini_service_retry_delays_seconds
+    )
+
+    with session_factory() as session:
+        job = session.scalar(
+            select(TranslationJob)
+            .where(
+                TranslationJob.id == job_id,
+                TranslationJob.status == JobStatus.TRANSLATING,
+            )
+            .with_for_update()
+        )
+        if job is None:
+            return False
+
+        attempt = job.translation_retry_attempt + 1
+        if attempt > len(schedule):
+            return False
+
+        scheduled_delay = float(schedule[attempt - 1])
+        provider_delay = min(
+            max(0.0, error.retry_after_seconds or 0.0),
+            float(settings.gemini_retry_hint_max_seconds),
+        )
+        base_delay = max(scheduled_delay, provider_delay)
+        jitter_limit = min(
+            settings.gemini_deferred_retry_jitter_max_seconds,
+            base_delay * settings.gemini_deferred_retry_jitter_ratio,
+        )
+        jitter_seconds = min(
+            jitter_limit,
+            max(0.0, jitter(0.0, jitter_limit)),
+        )
+        effective_delay = base_delay + jitter_seconds
+        next_retry_at = reference_time + timedelta(seconds=effective_delay)
+
+        job.status = JobStatus.TRANSLATION_RETRY_WAIT
+        job.translation_retry_attempt = attempt
+        job.translation_next_retry_at = next_retry_at
+        job.translation_wait_reason = wait_reason
+        job.translation_heartbeat_at = None
+        job.failure_code = None
+        session.commit()
+
+    logger.warning(
+        json.dumps(
+            {
+                "event": "job_translation_retry_deferred",
+                "jobId": job_id,
+                "httpStatus": error.http_status,
+                "waitReason": wait_reason,
+                "retryAttempt": attempt,
+                "delaySeconds": round(effective_delay, 3),
+                "nextRetryAt": next_retry_at.isoformat(),
+            }
+        )
+    )
+    return True
 
 
 def resolve_preview_pages(
@@ -250,12 +405,13 @@ def reconcile_translation_checkpoints(
             max(path.stat().st_mtime for path in translated_pages),
             timezone.utc,
         )
-    synchronize_translation_progress(
+    if not synchronize_translation_progress(
         job_id,
         session_factory,
         len(translated_pages),
         checkpoint_updated_at,
-    )
+    ):
+        raise TranslationClaimLost
     return translated_pages
 
 
@@ -278,6 +434,8 @@ def translate_job(
     session_factory: SessionFactory,
     settings: Settings,
     translator: PageTranslator,
+    *,
+    retry_jitter: RetryJitter = random.uniform,
 ) -> str:
     normalized_job_id = normalize_job_id(job_id)
     if normalized_job_id is None:
@@ -336,6 +494,11 @@ def translate_job(
         )
         for page_number in range(len(translated_pages) + 1, job.page_count + 1):
             preview_page = preview_pages[page_number - 1]
+            if not touch_translation_heartbeat(
+                normalized_job_id,
+                session_factory,
+            ):
+                raise TranslationClaimLost
             translation = translator.translate_page(preview_page)
             translated_page = translated_pages_directory / preview_page.name
             partial_page = translated_pages_directory / f"{preview_page.name}.part"
@@ -343,12 +506,18 @@ def translate_job(
             render_translated_page(preview_page, partial_page, translation)
             partial_page.replace(translated_page)
             translated_pages.append(translated_page)
-            record_translation_progress(
+            if not record_translation_progress(
                 normalized_job_id,
                 session_factory,
                 page_number,
-            )
+            ):
+                raise TranslationClaimLost
 
+        if not touch_translation_heartbeat(
+            normalized_job_id,
+            session_factory,
+        ):
+            raise TranslationClaimLost
         temporary_result = checkpoint / result_filename
         temporary_result.unlink(missing_ok=True)
         build_result_pdf(translated_pages, temporary_result)
@@ -357,11 +526,23 @@ def translate_job(
     except FileNotFoundError:
         failure_code = "PREVIEW_NOT_FOUND"
     except GeminiTranslationError as error:
-        failure_code = (
-            "AI_RATE_LIMITED"
-            if error.http_status == 429
-            else "AI_TRANSLATION_FAILED"
-        )
+        if is_deferred_gemini_error(error) and defer_translation_retry(
+            normalized_job_id,
+            session_factory,
+            settings,
+            error,
+            jitter=retry_jitter,
+        ):
+            return JobStatus.TRANSLATION_RETRY_WAIT
+        if error.http_status == 429:
+            failure_code = "AI_RATE_LIMITED"
+        elif is_deferred_gemini_error(error):
+            failure_code = "AI_SERVICE_UNAVAILABLE"
+        else:
+            failure_code = "AI_TRANSLATION_FAILED"
+    except TranslationClaimLost:
+        result_path.unlink(missing_ok=True)
+        return get_translation_job_status(normalized_job_id, session_factory)
     except ResultBuildError:
         failure_code = "RESULT_BUILD_FAILED"
     except Exception:
@@ -375,11 +556,16 @@ def translate_job(
             )
         )
     else:
-        mark_translation_completed(
+        if not mark_translation_completed(
             normalized_job_id,
             session_factory,
             result_filename,
-        )
+        ):
+            result_path.unlink(missing_ok=True)
+            return get_translation_job_status(
+                normalized_job_id,
+                session_factory,
+            )
         rmtree(checkpoint, ignore_errors=True)
         logger.info(
             json.dumps(
@@ -392,7 +578,12 @@ def translate_job(
         )
         return JobStatus.COMPLETED
     result_path.unlink(missing_ok=True)
-    mark_translation_failed(normalized_job_id, session_factory, failure_code)
+    if not mark_translation_failed(
+        normalized_job_id,
+        session_factory,
+        failure_code,
+    ):
+        return get_translation_job_status(normalized_job_id, session_factory)
     logger.warning(
         json.dumps(
             {
@@ -440,6 +631,9 @@ def translate_job_task(job_id: str) -> str:
         max_retries=settings.gemini_max_retries,
         retry_base_delay_seconds=settings.gemini_retry_base_delay_seconds,
         retry_max_delay_seconds=settings.gemini_retry_max_delay_seconds,
+        inline_retry_max_delay_seconds=(
+            settings.gemini_inline_retry_max_delay_seconds
+        ),
     )
     return translate_job(job_id, SessionLocal, settings, translator)
 
