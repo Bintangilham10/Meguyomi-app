@@ -11,6 +11,7 @@ RETRYABLE_TRANSLATION_FAILURE_CODES = frozenset(
     {
         "AI_NOT_CONFIGURED",
         "AI_RATE_LIMITED",
+        "AI_SERVICE_UNAVAILABLE",
         "AI_TRANSLATION_FAILED",
         "QUEUE_UNAVAILABLE",
         "RESULT_BUILD_FAILED",
@@ -48,6 +49,19 @@ class TranslationJob(Base):
         nullable=True,
     )
     checkpoint_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    translation_retry_attempt: Mapped[int] = mapped_column(Integer, default=0)
+    translation_next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    translation_wait_reason: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+    )
+    translation_heartbeat_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
