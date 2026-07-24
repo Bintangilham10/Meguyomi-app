@@ -184,6 +184,30 @@ def test_gemini_http_429_is_retryable_and_respects_retry_after(
     assert captured.value.retry_after_seconds == 17
 
 
+def test_gemini_http_429_reads_retry_delay_from_error_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def reject_request(_request: Request, timeout: float):
+        del timeout
+        raise HTTPError(
+            url="https://generativelanguage.googleapis.com/test",
+            code=429,
+            msg="Too Many Requests",
+            hdrs=None,
+            fp=BytesIO(
+                b'{"error":{"details":[{"retryDelay":"42.5s"}]}}'
+            ),
+        )
+
+    monkeypatch.setattr(manga_translation, "urlopen", reject_request)
+    request = Request("https://generativelanguage.googleapis.com/test")
+
+    with pytest.raises(GeminiTranslationError) as captured:
+        manga_translation._read_response(request, 30, 100_000)
+
+    assert captured.value.retry_after_seconds == 42.5
+
+
 def test_gemini_translator_retries_transient_error_then_succeeds(
     tmp_path: Path,
 ) -> None:
@@ -220,6 +244,42 @@ def test_gemini_translator_retries_transient_error_then_succeeds(
     assert result.regions == []
     assert calls == 2
     assert sleeps == [12]
+
+
+def test_gemini_translator_defers_retry_longer_than_inline_limit(
+    tmp_path: Path,
+) -> None:
+    page_path = tmp_path / "page.png"
+    make_page(page_path)
+    calls = 0
+    sleeps: list[float] = []
+
+    def transport(_request: Request, _timeout: float, _limit: int) -> bytes:
+        nonlocal calls
+        calls += 1
+        raise GeminiTranslationError(
+            "Gemini request failed.",
+            http_status=429,
+            retryable=True,
+            retry_after_seconds=3_600,
+        )
+
+    translator = GeminiPageTranslator(
+        api_key="test-key",
+        max_retries=1,
+        inline_retry_max_delay_seconds=15,
+        min_request_interval_seconds=0,
+        transport=transport,
+        sleeper=sleeps.append,
+        jitter=lambda _start, _end: 0,
+    )
+
+    with pytest.raises(GeminiTranslationError) as captured:
+        translator.translate_page(page_path)
+
+    assert captured.value.retry_after_seconds == 3_600
+    assert calls == 1
+    assert sleeps == []
 
 
 def test_gemini_translator_does_not_retry_non_transient_error(
