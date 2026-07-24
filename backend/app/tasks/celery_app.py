@@ -21,10 +21,22 @@ celery_app.conf.update(
         "app.tasks.translation",
         "app.tasks.maintenance",
     ),
+    task_routes={
+        "meguyomi.cleanup_translation_checkpoints": {
+            "queue": "maintenance",
+        },
+        "meguyomi.recover_translation_jobs": {
+            "queue": "maintenance",
+        },
+    },
     beat_schedule={
         "cleanup-translation-checkpoints": {
             "task": "meguyomi.cleanup_translation_checkpoints",
             "schedule": crontab(hour=3, minute=0),
-        }
+        },
+        "recover-translation-jobs": {
+            "task": "meguyomi.recover_translation_jobs",
+            "schedule": 30.0,
+        },
     },
 )
