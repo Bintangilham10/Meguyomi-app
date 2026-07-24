@@ -212,9 +212,10 @@ class GeminiPageTranslator:
         max_response_bytes: int = 2 * 1024 * 1024,
         max_output_tokens: int = 8_192,
         min_request_interval_seconds: float = 15.0,
-        max_retries: int = 5,
+        max_retries: int = 1,
         retry_base_delay_seconds: float = 5.0,
         retry_max_delay_seconds: float = 60.0,
+        inline_retry_max_delay_seconds: float = 15.0,
         transport: GeminiTransport = _read_response,
         clock: Clock = time.monotonic,
         sleeper: Sleeper = time.sleep,
@@ -228,7 +229,14 @@ class GeminiPageTranslator:
             raise ValueError("Gemini request limits must be greater than zero.")
         if min_request_interval_seconds < 0 or max_retries < 0:
             raise ValueError("Gemini retry limits must not be negative.")
-        if min(retry_base_delay_seconds, retry_max_delay_seconds) <= 0:
+        if (
+            min(
+                retry_base_delay_seconds,
+                retry_max_delay_seconds,
+                inline_retry_max_delay_seconds,
+            )
+            <= 0
+        ):
             raise ValueError("Gemini retry delays must be greater than zero.")
         self.api_key = api_key
         self.model = model
@@ -240,6 +248,7 @@ class GeminiPageTranslator:
         self.max_retries = max_retries
         self.retry_base_delay_seconds = retry_base_delay_seconds
         self.retry_max_delay_seconds = retry_max_delay_seconds
+        self.inline_retry_max_delay_seconds = inline_retry_max_delay_seconds
         self.transport = transport
         self.clock = clock
         self.sleeper = sleeper
@@ -270,6 +279,8 @@ class GeminiPageTranslator:
                 if not error.retryable or retry_index >= self.max_retries:
                     raise
                 delay = self._retry_delay(error, retry_index)
+                if delay > self.inline_retry_max_delay_seconds:
+                    raise
                 logger.warning(
                     json.dumps(
                         {
