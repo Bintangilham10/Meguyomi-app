@@ -1,10 +1,19 @@
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 from pydantic.alias_generators import to_camel
 
 from app.models.job_status import JobStatus
+
+
+TranslationWaitReason = Literal[
+    "rate_limited",
+    "service_unavailable",
+    "worker_recovery",
+    "queue_unavailable",
+]
 
 
 class JobResponse(BaseModel):
@@ -24,10 +33,25 @@ class JobResponse(BaseModel):
     started_at: datetime | None = None
     prepared_at: datetime | None = None
     translation_started_at: datetime | None = None
+    translation_retry_attempt: int = 0
+    translation_next_retry_at: datetime | None = None
+    translation_wait_reason: TranslationWaitReason | None = None
     completed_at: datetime | None = None
     failure_code: str | None = None
     result_available: bool = False
     can_retry_translation: bool = False
+
+    @field_validator("translation_next_retry_at")
+    @classmethod
+    def normalize_retry_time_to_utc(
+        cls,
+        value: datetime | None,
+    ) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
 
 class PaginationResponse(BaseModel):
