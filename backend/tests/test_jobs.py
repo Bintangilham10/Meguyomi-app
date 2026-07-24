@@ -334,7 +334,11 @@ def test_start_translation_requires_ai_configuration(
 
 @pytest.mark.parametrize(
     "failure_code",
-    ["AI_TRANSLATION_FAILED", "AI_RATE_LIMITED"],
+    [
+        "AI_TRANSLATION_FAILED",
+        "AI_RATE_LIMITED",
+        "AI_SERVICE_UNAVAILABLE",
+    ],
 )
 def test_start_translation_retries_recoverable_ai_failure(
     authenticated_client: TestClient,
@@ -352,6 +356,10 @@ def test_start_translation_retries_recoverable_ai_failure(
         prepared_at=datetime.now(timezone.utc),
         failure_code=failure_code,
         translated_page_count=1,
+        translation_retry_attempt=3,
+        translation_next_retry_at=datetime.now(timezone.utc),
+        translation_wait_reason="service_unavailable",
+        translation_heartbeat_at=datetime.now(timezone.utc),
     )
     dispatched_job_ids: list[str] = []
     monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
@@ -367,9 +375,40 @@ def test_start_translation_retries_recoverable_ai_failure(
     assert response.status_code == 202
     assert response.json()["status"] == "TRANSLATION_QUEUED"
     assert response.json()["translatedPageCount"] == 1
+    assert response.json()["translationRetryAttempt"] == 0
+    assert response.json()["translationNextRetryAt"] is None
+    assert response.json()["translationWaitReason"] is None
     assert response.json()["canRetryTranslation"] is False
     assert dispatched_job_ids == [job_id]
     get_settings.cache_clear()
+
+
+def test_retry_wait_response_uses_utc_timestamp_and_wait_reason(
+    authenticated_client: TestClient,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("chapter.pdf", make_pdf(), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    update_job(
+        job_id,
+        status=JobStatus.TRANSLATION_RETRY_WAIT,
+        prepared_at=datetime.now(timezone.utc),
+        translated_page_count=1,
+        translation_retry_attempt=2,
+        translation_next_retry_at=datetime(2026, 7, 23, 12, 30),
+        translation_wait_reason="rate_limited",
+    )
+
+    job = authenticated_client.get("/jobs").json()["data"][0]
+
+    assert job["status"] == "TRANSLATION_RETRY_WAIT"
+    assert job["translationRetryAttempt"] == 2
+    assert job["translationWaitReason"] == "rate_limited"
+    assert job["translationNextRetryAt"].endswith("Z") or job[
+        "translationNextRetryAt"
+    ].endswith("+00:00")
 
 
 def test_download_returns_completed_job_result(
@@ -433,6 +472,34 @@ def test_delete_terminal_job_removes_record_and_all_artifacts(
     assert not preview_directory.exists()
     assert not checkpoint_directory.exists()
     assert not result_path.exists()
+    assert authenticated_client.get("/jobs").json()["data"] == []
+
+
+def test_delete_retry_wait_job_removes_checkpoint_and_record(
+    authenticated_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("waiting.pdf", make_pdf(), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    checkpoint_directory = tmp_path / "temporary" / f"{job_id}.translation"
+    checkpoint_directory.mkdir(parents=True)
+    (checkpoint_directory / "page-0001.png").write_bytes(b"checkpoint")
+    update_job(
+        job_id,
+        status=JobStatus.TRANSLATION_RETRY_WAIT,
+        prepared_at=datetime.now(timezone.utc),
+        translation_retry_attempt=1,
+        translation_next_retry_at=datetime.now(timezone.utc),
+        translation_wait_reason="service_unavailable",
+    )
+
+    response = authenticated_client.delete(f"/jobs/{job_id}")
+
+    assert response.status_code == 204
+    assert not checkpoint_directory.exists()
     assert authenticated_client.get("/jobs").json()["data"] == []
 
 
