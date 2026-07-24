@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 DELETABLE_JOB_STATUSES = frozenset(
     {
         JobStatus.READY_FOR_TRANSLATION,
+        JobStatus.TRANSLATION_RETRY_WAIT,
         JobStatus.COMPLETED,
         JobStatus.FAILED,
     }
@@ -235,6 +236,10 @@ def start_translation(
             completed_at=None,
             result_filename=None,
             failure_code=None,
+            translation_retry_attempt=0,
+            translation_next_retry_at=None,
+            translation_wait_reason=None,
+            translation_heartbeat_at=None,
         )
     )
     if claimed.rowcount != 1:
