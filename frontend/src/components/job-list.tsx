@@ -50,6 +50,32 @@ export function JobList({ jobs, pagination, error }: JobListProps) {
     }
   }
 
+  async function retryPreparation(jobId: string) {
+    setStartingJobId(jobId);
+    setActionError(null);
+    try {
+      const response = await fetch(`/api/jobs/${jobId}/preparation`, {
+        method: "POST",
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        setActionError(
+          parseApiErrorMessage(body, "Persiapan ulang tidak dapat dimulai."),
+        );
+        return;
+      }
+      if (!parseJobResponse(body)) {
+        setActionError("Respons pekerjaan terjemahan tidak valid.");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setActionError("Layanan persiapan sedang tidak tersedia.");
+    } finally {
+      setStartingJobId(null);
+    }
+  }
+
   async function deleteJob(job: TranslationJob) {
     const confirmed = window.confirm(
       `Hapus ${job.originalFilename} beserta seluruh file hasilnya?`,
@@ -126,6 +152,7 @@ export function JobList({ jobs, pagination, error }: JobListProps) {
             isStarting={startingJobId === job.id}
             onDelete={deleteJob}
             onStartTranslation={startTranslation}
+            onRetryPreparation={retryPreparation}
           />
         ))}
       </ol>
