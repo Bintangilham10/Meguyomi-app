@@ -20,6 +20,14 @@ test("getJobStatusPresentation describes every translation state", () => {
     "Menunggu AI",
   );
   assert.equal(getJobStatusPresentation("TRANSLATING").label, "Menerjemahkan");
+  assert.equal(
+    getJobStatusPresentation(
+      "TRANSLATION_RETRY_WAIT",
+      null,
+      "service_unavailable",
+    ).label,
+    "Menunggu layanan AI",
+  );
   assert.equal(getJobStatusPresentation("COMPLETED").label, "Selesai");
   assert.equal(getJobStatusPresentation("FAILED").label, "Gagal diproses");
 });
@@ -59,9 +67,52 @@ test("getJobStatusPresentation explains exhausted Gemini rate limits", () => {
 });
 
 
+test("getJobStatusPresentation explains every automatic wait reason", () => {
+  assert.match(
+    getJobStatusPresentation(
+      "TRANSLATION_RETRY_WAIT",
+      null,
+      "rate_limited",
+    ).detail,
+    /kuota Gemini/i,
+  );
+  assert.match(
+    getJobStatusPresentation(
+      "TRANSLATION_RETRY_WAIT",
+      null,
+      "worker_recovery",
+    ).detail,
+    /worker terhenti/i,
+  );
+  assert.match(
+    getJobStatusPresentation(
+      "TRANSLATION_RETRY_WAIT",
+      null,
+      "queue_unavailable",
+    ).detail,
+    /antrean/i,
+  );
+});
+
+
+test("getJobStatusPresentation explains unavailable AI after retries", () => {
+  const presentation = getJobStatusPresentation(
+    "FAILED",
+    "AI_SERVICE_UNAVAILABLE",
+  );
+
+  assert.equal(presentation.label, "Layanan AI belum tersedia");
+  assert.match(presentation.detail, /coba lagi/i);
+});
+
+
 test("shouldShowTranslationProgress keeps checkpoint progress visible", () => {
   assert.equal(shouldShowTranslationProgress("TRANSLATION_QUEUED", 7), true);
   assert.equal(shouldShowTranslationProgress("TRANSLATING", 7), true);
+  assert.equal(
+    shouldShowTranslationProgress("TRANSLATION_RETRY_WAIT", 7),
+    true,
+  );
   assert.equal(shouldShowTranslationProgress("FAILED", 7), true);
   assert.equal(shouldShowTranslationProgress("FAILED", 0), false);
   assert.equal(shouldShowTranslationProgress("COMPLETED", 10), false);
@@ -73,6 +124,7 @@ test("shouldRefreshJobStatus only polls active jobs", () => {
   assert.equal(shouldRefreshJobStatus("PROCESSING"), true);
   assert.equal(shouldRefreshJobStatus("TRANSLATION_QUEUED"), true);
   assert.equal(shouldRefreshJobStatus("TRANSLATING"), true);
+  assert.equal(shouldRefreshJobStatus("TRANSLATION_RETRY_WAIT"), true);
   assert.equal(shouldRefreshJobStatus("READY_FOR_TRANSLATION"), false);
   assert.equal(shouldRefreshJobStatus("COMPLETED"), false);
   assert.equal(shouldRefreshJobStatus("FAILED"), false);
