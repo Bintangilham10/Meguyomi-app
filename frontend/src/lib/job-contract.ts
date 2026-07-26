@@ -21,6 +21,7 @@ function isTranslationJob(value: unknown): value is TranslationJob {
     "READY_FOR_TRANSLATION",
     "TRANSLATION_QUEUED",
     "TRANSLATING",
+    "TRANSLATION_RETRY_WAIT",
     "COMPLETED",
     "FAILED",
   ]);
@@ -28,6 +29,7 @@ function isTranslationJob(value: unknown): value is TranslationJob {
     value.startedAt,
     value.preparedAt,
     value.translationStartedAt,
+    value.translationNextRetryAt,
     value.completedAt,
   ].every(
     (date) =>
@@ -46,6 +48,29 @@ function isTranslationJob(value: unknown): value is TranslationJob {
     Number.isInteger(value.translatedPageCount) &&
     Number(value.translatedPageCount) >= 0 &&
     Number(value.translatedPageCount) <= Number(value.pageCount);
+  const retryAttemptValid =
+    Number.isInteger(value.translationRetryAttempt) &&
+    Number(value.translationRetryAttempt) >= 0 &&
+    Number(value.translationRetryAttempt) <= 3;
+  const validWaitReasons = new Set([
+    "rate_limited",
+    "service_unavailable",
+    "worker_recovery",
+    "queue_unavailable",
+  ]);
+  const waitReasonValid =
+    value.translationWaitReason === null ||
+    (typeof value.translationWaitReason === "string" &&
+      validWaitReasons.has(value.translationWaitReason));
+  const retryTimestampHasTimezone =
+    value.translationNextRetryAt === null ||
+    (typeof value.translationNextRetryAt === "string" &&
+      /(Z|[+-]\d{2}:\d{2})$/i.test(value.translationNextRetryAt));
+  const retryWaitValid =
+    value.status !== "TRANSLATION_RETRY_WAIT" ||
+    (Number(value.translationRetryAttempt) > 0 &&
+      value.translationWaitReason !== null &&
+      value.translationNextRetryAt !== null);
 
   return (
     typeof value.id === "string" &&
@@ -57,6 +82,10 @@ function isTranslationJob(value: unknown): value is TranslationJob {
     Number.isInteger(value.pageCount) &&
     Number(value.pageCount) > 0 &&
     translatedPageCountValid &&
+    retryAttemptValid &&
+    waitReasonValid &&
+    retryTimestampHasTimezone &&
+    retryWaitValid &&
     typeof value.status === "string" &&
     validStatuses.has(value.status) &&
     typeof value.createdAt === "string" &&
@@ -64,7 +93,8 @@ function isTranslationJob(value: unknown): value is TranslationJob {
     optionalDatesValid &&
     failureCodeValid &&
     resultAvailableValid &&
-    typeof value.canRetryTranslation === "boolean"
+    typeof value.canRetryTranslation === "boolean" &&
+    typeof value.canRetryPreparation === "boolean"
   );
 }
 
