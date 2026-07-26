@@ -14,7 +14,11 @@ const validJob = {
   sizeBytes: 1_024,
   pageCount: 12,
   translatedPageCount: 0,
+  translationRetryAttempt: 0,
+  translationNextRetryAt: null,
+  translationWaitReason: null,
   canRetryTranslation: false,
+  canRetryPreparation: false,
   status: "QUEUED",
   createdAt: "2026-07-14T01:30:00Z",
 };
@@ -47,10 +51,25 @@ test("parseJobListResponse accepts every preparation status", () => {
     "READY_FOR_TRANSLATION",
     "TRANSLATION_QUEUED",
     "TRANSLATING",
+    "TRANSLATION_RETRY_WAIT",
     "COMPLETED",
     "FAILED",
   ]) {
-    const job = { ...validJob, status, resultAvailable: status === "COMPLETED" };
+    const job =
+      status === "TRANSLATION_RETRY_WAIT"
+        ? {
+            ...validJob,
+            status,
+            translationRetryAttempt: 1,
+            translationNextRetryAt: "2026-07-23T12:30:00+00:00",
+            translationWaitReason: "service_unavailable",
+            resultAvailable: false,
+          }
+        : {
+            ...validJob,
+            status,
+            resultAvailable: status === "COMPLETED",
+          };
     const response = { data: [job], pagination: validPagination };
     assert.deepEqual(parseJobListResponse(response), response);
   }
@@ -82,6 +101,43 @@ test("parseJobListResponse rejects malformed job data", () => {
   assert.equal(
     parseJobListResponse({
       data: [{ ...validJob, canRetryTranslation: "yes" }],
+      pagination: validPagination,
+    }),
+    null,
+  );
+  assert.equal(
+    parseJobListResponse({
+      data: [{ ...validJob, canRetryPreparation: undefined }],
+      pagination: validPagination,
+    }),
+    null,
+  );
+  assert.equal(
+    parseJobListResponse({
+      data: [
+        {
+          ...validJob,
+          status: "TRANSLATION_RETRY_WAIT",
+          translationRetryAttempt: 1,
+          translationNextRetryAt: "2026-07-23T12:30:00",
+          translationWaitReason: "service_unavailable",
+        },
+      ],
+      pagination: validPagination,
+    }),
+    null,
+  );
+  assert.equal(
+    parseJobListResponse({
+      data: [
+        {
+          ...validJob,
+          status: "TRANSLATION_RETRY_WAIT",
+          translationRetryAttempt: 1,
+          translationNextRetryAt: "2026-07-23T12:30:00Z",
+          translationWaitReason: "unknown",
+        },
+      ],
       pagination: validPagination,
     }),
     null,
