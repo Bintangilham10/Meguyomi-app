@@ -4,8 +4,15 @@ export type TranslationJobStatus =
   | "READY_FOR_TRANSLATION"
   | "TRANSLATION_QUEUED"
   | "TRANSLATING"
+  | "TRANSLATION_RETRY_WAIT"
   | "COMPLETED"
   | "FAILED";
+
+export type TranslationWaitReason =
+  | "rate_limited"
+  | "service_unavailable"
+  | "worker_recovery"
+  | "queue_unavailable";
 
 
 export interface TranslationJob {
@@ -19,10 +26,14 @@ export interface TranslationJob {
   startedAt?: string | null;
   preparedAt?: string | null;
   translationStartedAt?: string | null;
+  translationRetryAttempt: number;
+  translationNextRetryAt?: string | null;
+  translationWaitReason?: TranslationWaitReason | null;
   completedAt?: string | null;
   failureCode?: string | null;
   resultAvailable?: boolean;
   canRetryTranslation: boolean;
+  canRetryPreparation: boolean;
 }
 
 
