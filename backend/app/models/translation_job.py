@@ -19,6 +19,13 @@ RETRYABLE_TRANSLATION_FAILURE_CODES = frozenset(
     }
 )
 
+RETRYABLE_PREPARATION_FAILURE_CODES = frozenset(
+    {
+        "PREPARATION_FAILED",
+        "QUEUE_UNAVAILABLE",
+    }
+)
+
 
 class TranslationJob(Base):
     __tablename__ = "translation_jobs"
@@ -82,4 +89,12 @@ class TranslationJob(Base):
             self.status == JobStatus.FAILED
             and self.prepared_at is not None
             and self.failure_code in RETRYABLE_TRANSLATION_FAILURE_CODES
+        )
+
+    @property
+    def can_retry_preparation(self) -> bool:
+        return (
+            self.status == JobStatus.FAILED
+            and self.prepared_at is None
+            and self.failure_code in RETRYABLE_PREPARATION_FAILURE_CODES
         )
