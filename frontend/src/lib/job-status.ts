@@ -1,4 +1,7 @@
-import type { TranslationJobStatus } from "@/types/job";
+import type {
+  TranslationJobStatus,
+  TranslationWaitReason,
+} from "@/types/job";
 
 
 export interface JobStatusPresentation {
@@ -34,6 +37,11 @@ const presentations: Record<TranslationJobStatus, JobStatusPresentation> = {
     detail: "AI sedang membaca dan menerjemahkan halaman manga.",
     tone: "active",
   },
+  TRANSLATION_RETRY_WAIT: {
+    label: "Menunggu layanan AI",
+    detail: "Permintaan akan dicoba kembali secara otomatis.",
+    tone: "active",
+  },
   COMPLETED: {
     label: "Selesai",
     detail: "PDF terjemahan bahasa Indonesia siap diunduh.",
@@ -50,7 +58,39 @@ const presentations: Record<TranslationJobStatus, JobStatusPresentation> = {
 export function getJobStatusPresentation(
   status: TranslationJobStatus,
   failureCode?: string | null,
+  waitReason?: TranslationWaitReason | null,
 ): JobStatusPresentation {
+  if (status === "TRANSLATION_RETRY_WAIT") {
+    if (waitReason === "rate_limited") {
+      return {
+        label: "Menunggu batas Gemini",
+        detail:
+          "Batas kuota Gemini tercapai, menunggu percobaan berikutnya.",
+        tone: "active",
+      };
+    }
+    if (waitReason === "service_unavailable") {
+      return {
+        label: "Menunggu layanan AI",
+        detail: "Layanan AI sedang terganggu, akan dicoba kembali.",
+        tone: "active",
+      };
+    }
+    if (waitReason === "worker_recovery") {
+      return {
+        label: "Menunggu worker",
+        detail: "Proses worker terhenti, akan dilanjutkan otomatis.",
+        tone: "active",
+      };
+    }
+    if (waitReason === "queue_unavailable") {
+      return {
+        label: "Menunggu antrean",
+        detail: "Antrean sementara tidak tersedia, akan dicoba kembali.",
+        tone: "active",
+      };
+    }
+  }
   if (status === "FAILED" && failureCode === "QUEUE_UNAVAILABLE") {
     return {
       label: "Antrean tidak tersedia",
@@ -79,6 +119,13 @@ export function getJobStatusPresentation(
       tone: "danger",
     };
   }
+  if (status === "FAILED" && failureCode === "AI_SERVICE_UNAVAILABLE") {
+    return {
+      label: "Layanan AI belum tersedia",
+      detail: "Koneksi ke layanan AI belum berhasil. Coba lagi nanti.",
+      tone: "danger",
+    };
+  }
   if (
     status === "FAILED" &&
     (failureCode === "RESULT_BUILD_FAILED" ||
@@ -102,6 +149,7 @@ export function shouldShowTranslationProgress(
     translatedPageCount > 0 &&
     (status === "TRANSLATION_QUEUED" ||
       status === "TRANSLATING" ||
+      status === "TRANSLATION_RETRY_WAIT" ||
       status === "FAILED")
   );
 }
@@ -112,6 +160,7 @@ export function shouldRefreshJobStatus(status: TranslationJobStatus): boolean {
     status === "QUEUED" ||
     status === "PROCESSING" ||
     status === "TRANSLATION_QUEUED" ||
-    status === "TRANSLATING"
+    status === "TRANSLATING" ||
+    status === "TRANSLATION_RETRY_WAIT"
   );
 }
