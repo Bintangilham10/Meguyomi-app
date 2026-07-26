@@ -197,6 +197,122 @@ def test_upload_marks_job_failed_when_queue_is_unavailable(
     assert response.json()["failureCode"] == "QUEUE_UNAVAILABLE"
 
 
+def test_retry_preparation_requeues_job_after_dispatch_failure(
+    authenticated_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("chapter.pdf", make_pdf(), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    update_job(job_id, status=JobStatus.FAILED, failure_code="QUEUE_UNAVAILABLE")
+
+    listed_job = authenticated_client.get("/jobs").json()["data"][0]
+    assert listed_job["canRetryPreparation"] is True
+    assert listed_job["canRetryTranslation"] is False
+
+    dispatched_job_ids: list[str] = []
+    monkeypatch.setattr(
+        "app.api.jobs.dispatch_preparation_job",
+        dispatched_job_ids.append,
+        raising=False,
+    )
+
+    response = authenticated_client.post(f"/jobs/{job_id}/preparation")
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "QUEUED"
+    assert response.json()["failureCode"] is None
+    assert response.json()["canRetryPreparation"] is False
+    assert dispatched_job_ids == [job_id]
+
+    duplicate_response = authenticated_client.post(f"/jobs/{job_id}/preparation")
+    assert duplicate_response.status_code == 409
+    assert duplicate_response.json()["error"]["code"] == "JOB_NOT_RETRYABLE"
+
+
+@pytest.mark.parametrize(
+    ("job_status", "prepared_at", "failure_code"),
+    [
+        (JobStatus.FAILED, datetime.now(timezone.utc), "QUEUE_UNAVAILABLE"),
+        (JobStatus.FAILED, None, "SOURCE_NOT_FOUND"),
+        (JobStatus.READY_FOR_TRANSLATION, datetime.now(timezone.utc), None),
+    ],
+)
+def test_retry_preparation_rejects_ineligible_job(
+    authenticated_client: TestClient,
+    job_status: str,
+    prepared_at: datetime | None,
+    failure_code: str | None,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("chapter.pdf", make_pdf(), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    update_job(
+        job_id,
+        status=job_status,
+        prepared_at=prepared_at,
+        failure_code=failure_code,
+    )
+
+    response = authenticated_client.post(f"/jobs/{job_id}/preparation")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "JOB_NOT_RETRYABLE"
+
+
+def test_retry_preparation_marks_job_failed_when_queue_still_down(
+    authenticated_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("chapter.pdf", make_pdf(), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    update_job(job_id, status=JobStatus.FAILED, failure_code="PREPARATION_FAILED")
+
+    def fail_dispatch(_job_id: str) -> None:
+        raise RuntimeError("broker connection failed")
+
+    monkeypatch.setattr(
+        "app.api.jobs.dispatch_preparation_job",
+        fail_dispatch,
+        raising=False,
+    )
+
+    response = authenticated_client.post(f"/jobs/{job_id}/preparation")
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "FAILED"
+    assert response.json()["failureCode"] == "QUEUE_UNAVAILABLE"
+    assert response.json()["canRetryPreparation"] is True
+
+
+def test_retry_preparation_hides_job_owned_by_another_user(
+    authenticated_client: TestClient,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("private.pdf", make_pdf(), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    update_job(
+        job_id,
+        owner_username="another-owner",
+        status=JobStatus.FAILED,
+        failure_code="QUEUE_UNAVAILABLE",
+    )
+
+    response = authenticated_client.post(f"/jobs/{job_id}/preparation")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "JOB_NOT_FOUND"
+
+
 def test_upload_rejects_file_over_size_limit(
     authenticated_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
