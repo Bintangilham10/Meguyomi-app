@@ -12,6 +12,7 @@ interface JobListItemProps {
   isStarting: boolean;
   onDelete: (job: TranslationJob) => void;
   onStartTranslation: (jobId: string) => void;
+  onRetryPreparation: (jobId: string) => void;
 }
 
 
@@ -36,8 +37,13 @@ export function JobListItem({
   isStarting,
   onDelete,
   onStartTranslation,
+  onRetryPreparation,
 }: JobListItemProps) {
-  const presentation = getJobStatusPresentation(job.status, job.failureCode);
+  const presentation = getJobStatusPresentation(
+    job.status,
+    job.failureCode,
+    job.translationWaitReason,
+  );
   const canStartTranslation =
     job.status === "READY_FOR_TRANSLATION" || job.canRetryTranslation;
   const statusClass =
@@ -61,6 +67,8 @@ export function JobListItem({
               <span>
                 {job.status === "FAILED"
                   ? "Checkpoint tersimpan"
+                  : job.status === "TRANSLATION_RETRY_WAIT"
+                    ? "Checkpoint tersimpan"
                   : job.status === "TRANSLATION_QUEUED"
                     ? "Akan dilanjutkan"
                     : "Progres terjemahan"}
@@ -93,9 +101,18 @@ export function JobListItem({
           {presentation.label}
           <span className="sr-only">: {presentation.detail}</span>
         </p>
-        {job.status === "FAILED" ? (
+        {job.status === "FAILED" ||
+        job.status === "TRANSLATION_RETRY_WAIT" ? (
           <p className="max-w-xs text-left text-xs leading-5 text-[var(--muted)] sm:text-right">
             {presentation.detail}
+            {job.status === "TRANSLATION_RETRY_WAIT" &&
+            job.translationNextRetryAt ? (
+              <>
+                {" "}
+                Percobaan berikutnya{" "}
+                {dateFormatter.format(new Date(job.translationNextRetryAt))}.
+              </>
+            ) : null}
           </p>
         ) : null}
         {canStartTranslation ? (
@@ -110,6 +127,16 @@ export function JobListItem({
               : job.canRetryTranslation
                 ? "Coba terjemahkan lagi"
                 : "Mulai terjemahan"}
+          </button>
+        ) : null}
+        {job.canRetryPreparation ? (
+          <button
+            type="button"
+            disabled={isStarting || isDeleting}
+            onClick={() => onRetryPreparation(job.id)}
+            className="border border-[var(--accent)] px-3 py-2 text-xs font-semibold text-[var(--accent-strong)] transition hover:bg-[var(--accent)] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isStarting ? "Mengantrekan..." : "Coba siapkan lagi"}
           </button>
         ) : null}
         {job.status === "COMPLETED" && job.resultAvailable ? (
