@@ -14,6 +14,7 @@ from app.api.dependencies import AuthenticatedUser
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.translation_job import (
+    RETRYABLE_PREPARATION_FAILURE_CODES,
     RETRYABLE_TRANSLATION_FAILURE_CODES,
     TranslationJob,
 )
@@ -27,6 +28,7 @@ from app.tasks.translation import dispatch_translation_job
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 logger = logging.getLogger(__name__)
+JOB_NOT_FOUND_MESSAGE = "Pekerjaan terjemahan tidak ditemukan."
 DELETABLE_JOB_STATUSES = frozenset(
     {
         JobStatus.READY_FOR_TRANSLATION,
@@ -155,7 +157,7 @@ def delete_job(
         return api_error(
             status.HTTP_404_NOT_FOUND,
             "JOB_NOT_FOUND",
-            "Pekerjaan terjemahan tidak ditemukan.",
+            JOB_NOT_FOUND_MESSAGE,
         )
     if job.status not in DELETABLE_JOB_STATUSES:
         return api_error(
@@ -193,6 +195,77 @@ def delete_job(
         )
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/{job_id}/preparation",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=JobResponse,
+)
+def retry_preparation(
+    job_id: UUID,
+    username: AuthenticatedUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> JobResponse | JSONResponse:
+    normalized_job_id = str(job_id)
+    claimed = db.execute(
+        update(TranslationJob)
+        .where(
+            TranslationJob.id == normalized_job_id,
+            TranslationJob.owner_username == username,
+            TranslationJob.status == JobStatus.FAILED,
+            TranslationJob.prepared_at.is_(None),
+            TranslationJob.failure_code.in_(RETRYABLE_PREPARATION_FAILURE_CODES),
+        )
+        .values(
+            status=JobStatus.QUEUED,
+            started_at=None,
+            failure_code=None,
+        )
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        existing = db.scalar(
+            select(TranslationJob).where(
+                TranslationJob.id == normalized_job_id,
+                TranslationJob.owner_username == username,
+            )
+        )
+        if existing is None:
+            return api_error(
+                status.HTTP_404_NOT_FOUND,
+                "JOB_NOT_FOUND",
+                JOB_NOT_FOUND_MESSAGE,
+            )
+        return api_error(
+            status.HTTP_409_CONFLICT,
+            "JOB_NOT_RETRYABLE",
+            "Persiapan pekerjaan ini tidak dapat diulang.",
+        )
+
+    db.commit()
+    job = db.get(TranslationJob, normalized_job_id)
+    if job is None:
+        raise RuntimeError("Claimed preparation job could not be loaded.")
+
+    try:
+        dispatch_preparation_job(job.id)
+    except Exception:
+        logger.exception(
+            json.dumps(
+                {
+                    "event": "job_dispatch_failed",
+                    "jobId": job.id,
+                    "failureCode": "QUEUE_UNAVAILABLE",
+                }
+            )
+        )
+        job.status = JobStatus.FAILED
+        job.failure_code = "QUEUE_UNAVAILABLE"
+        db.commit()
+        db.refresh(job)
+
+    return JobResponse.model_validate(job)
 
 
 @router.post(
@@ -254,7 +327,7 @@ def start_translation(
             return api_error(
                 status.HTTP_404_NOT_FOUND,
                 "JOB_NOT_FOUND",
-                "Pekerjaan terjemahan tidak ditemukan.",
+                JOB_NOT_FOUND_MESSAGE,
             )
         return api_error(
             status.HTTP_409_CONFLICT,
@@ -303,7 +376,7 @@ def download_result(
         return api_error(
             status.HTTP_404_NOT_FOUND,
             "JOB_NOT_FOUND",
-            "Pekerjaan terjemahan tidak ditemukan.",
+            JOB_NOT_FOUND_MESSAGE,
         )
     if job.status != JobStatus.COMPLETED or not job.result_filename:
         return api_error(
