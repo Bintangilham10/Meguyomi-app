@@ -6,6 +6,7 @@ import { canDeleteJob } from "./job-deletion.ts";
 
 test("canDeleteJob permits only jobs without active workers", () => {
   assert.equal(canDeleteJob("READY_FOR_TRANSLATION"), true);
+  assert.equal(canDeleteJob("TRANSLATION_RETRY_WAIT"), true);
   assert.equal(canDeleteJob("COMPLETED"), true);
   assert.equal(canDeleteJob("FAILED"), true);
 
