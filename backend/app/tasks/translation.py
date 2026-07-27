@@ -359,6 +359,14 @@ def resolve_checkpoint_directory(settings: Settings, job_id: str) -> Path:
     return checkpoint
 
 
+def resolve_translation_records_directory(settings: Settings, job_id: str) -> Path:
+    translations_root = (settings.storage_root / "translations").resolve()
+    records = (translations_root / job_id).resolve()
+    if records.parent != translations_root:
+        raise ResultBuildError("Translation records path is invalid.")
+    return records
+
+
 def checkpoint_page_is_valid(checkpoint: Path, preview: Path) -> bool:
     try:
         with Image.open(preview) as preview_image:
@@ -374,22 +382,37 @@ def checkpoint_page_is_valid(checkpoint: Path, preview: Path) -> bool:
     return True
 
 
+def checkpoint_record_is_valid(record_path: Path) -> bool:
+    try:
+        json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def reconcile_translation_checkpoints(
     job_id: str,
     session_factory: SessionFactory,
     checkpoint_pages: Path,
     preview_pages: list[Path],
+    records_directory: Path,
 ) -> list[Path]:
     checkpoint_pages.mkdir(parents=True, exist_ok=True)
     for partial in checkpoint_pages.glob("*.part"):
+        partial.unlink(missing_ok=True)
+    records_directory.mkdir(parents=True, exist_ok=True)
+    for partial in records_directory.glob("*.json.part"):
         partial.unlink(missing_ok=True)
 
     translated_pages: list[Path] = []
     for preview_page in preview_pages:
         checkpoint_page = checkpoint_pages / preview_page.name
-        if not checkpoint_page.is_file() or not checkpoint_page_is_valid(
-            checkpoint_page,
-            preview_page,
+        if (
+            not checkpoint_page.is_file()
+            or not checkpoint_page_is_valid(checkpoint_page, preview_page)
+            or not checkpoint_record_is_valid(
+                records_directory / f"{preview_page.stem}.json"
+            )
         ):
             break
         translated_pages.append(checkpoint_page)
@@ -398,6 +421,9 @@ def reconcile_translation_checkpoints(
     for preview_page in preview_pages:
         if preview_page.name not in valid_names:
             (checkpoint_pages / preview_page.name).unlink(missing_ok=True)
+            (records_directory / f"{preview_page.stem}.json").unlink(
+                missing_ok=True
+            )
 
     checkpoint_updated_at = None
     if translated_pages:
@@ -486,11 +512,16 @@ def translate_job(
                 )
             )
         translated_pages_directory = checkpoint / "pages"
+        records_directory = resolve_translation_records_directory(
+            settings,
+            normalized_job_id,
+        )
         translated_pages = reconcile_translation_checkpoints(
             normalized_job_id,
             session_factory,
             translated_pages_directory,
             preview_pages,
+            records_directory,
         )
         for page_number in range(len(translated_pages) + 1, job.page_count + 1):
             preview_page = preview_pages[page_number - 1]
@@ -500,6 +531,15 @@ def translate_job(
             ):
                 raise TranslationClaimLost
             translation = translator.translate_page(preview_page)
+            translation_record = records_directory / f"{preview_page.stem}.json"
+            partial_record = (
+                records_directory / f"{preview_page.stem}.json.part"
+            )
+            partial_record.write_text(
+                translation.model_dump_json(),
+                encoding="utf-8",
+            )
+            partial_record.replace(translation_record)
             translated_page = translated_pages_directory / preview_page.name
             partial_page = translated_pages_directory / f"{preview_page.name}.part"
             partial_page.unlink(missing_ok=True)
