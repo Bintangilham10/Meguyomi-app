@@ -99,6 +99,11 @@ class Settings(BaseSettings):
         ge=0.0,
         le=600.0,
     )
+    preparation_timeout_seconds: int = Field(
+        default=600,
+        ge=60,
+        le=3_600,
+    )
     translation_heartbeat_timeout_seconds: int = Field(
         default=300,
         ge=60,
