@@ -2,6 +2,7 @@ from io import BytesIO
 from pathlib import Path
 from collections.abc import Iterator
 from datetime import datetime, timezone
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -197,6 +198,14 @@ def test_upload_marks_job_failed_when_queue_is_unavailable(
     assert response.json()["failureCode"] == "QUEUE_UNAVAILABLE"
 
 
+def test_retry_preparation_requires_authenticated_session() -> None:
+    with TestClient(app) as client:
+        response = client.post(f"/jobs/{uuid4()}/preparation")
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "NOT_AUTHENTICATED"
+
+
 def test_retry_preparation_requeues_job_after_dispatch_failure(
     authenticated_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -206,7 +215,12 @@ def test_retry_preparation_requeues_job_after_dispatch_failure(
         files={"file": ("chapter.pdf", make_pdf(), "application/pdf")},
     )
     job_id = upload_response.json()["id"]
-    update_job(job_id, status=JobStatus.FAILED, failure_code="QUEUE_UNAVAILABLE")
+    update_job(
+        job_id,
+        status=JobStatus.FAILED,
+        failure_code="QUEUE_UNAVAILABLE",
+        started_at=datetime.now(timezone.utc),
+    )
 
     listed_job = authenticated_client.get("/jobs").json()["data"][0]
     assert listed_job["canRetryPreparation"] is True
@@ -224,6 +238,7 @@ def test_retry_preparation_requeues_job_after_dispatch_failure(
     assert response.status_code == 202
     assert response.json()["status"] == "QUEUED"
     assert response.json()["failureCode"] is None
+    assert response.json()["startedAt"] is None
     assert response.json()["canRetryPreparation"] is False
     assert dispatched_job_ids == [job_id]
 
@@ -571,6 +586,9 @@ def test_delete_terminal_job_removes_record_and_all_artifacts(
     checkpoint_directory = tmp_path / "temporary" / f"{job_id}.translation"
     checkpoint_directory.mkdir(parents=True)
     (checkpoint_directory / "page.part").write_bytes(b"checkpoint")
+    records_directory = tmp_path / "translations" / job_id
+    records_directory.mkdir(parents=True)
+    (records_directory / "page-0001.json").write_text('{"regions": []}')
     result_path = tmp_path / "results" / f"{job_id}.pdf"
     result_path.parent.mkdir(parents=True)
     result_path.write_bytes(make_pdf())
@@ -587,6 +605,7 @@ def test_delete_terminal_job_removes_record_and_all_artifacts(
     assert not (tmp_path / "originals" / f"{job_id}.pdf").exists()
     assert not preview_directory.exists()
     assert not checkpoint_directory.exists()
+    assert not records_directory.exists()
     assert not result_path.exists()
     assert authenticated_client.get("/jobs").json()["data"] == []
 
