@@ -118,8 +118,7 @@ def prepare_translation_job(
 
     try:
         source = resolve_source_path(settings, job.stored_filename)
-        if destination.exists():
-            raise PreviewRenderError("Preview destination already exists.")
+        rmtree(destination, ignore_errors=True)
         rendered_pages = render_pdf_previews(
             source,
             temporary,
