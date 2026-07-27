@@ -8,5 +8,6 @@ itsdangerous==2.2.0
 pypdf==6.14.2
 pypdfium2==5.11.0
 Pillow==12.3.0
+opencv-python-headless==5.0.0.93
 alembic==1.18.5
 pytest==9.0.2
