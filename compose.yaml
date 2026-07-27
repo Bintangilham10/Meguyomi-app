@@ -1,16 +1,18 @@
 name: meguyomi
 
-x-backend-environment: &backend-environment
+x-backend-core-env: &backend-core-env
   APP_ENV: ${APP_ENV:-development}
   DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://meguyomi:change-me@postgres:5432/meguyomi}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-  ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-  ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
-  SESSION_SECRET: ${SESSION_SECRET:-development-only-session-secret-change-me}
   STORAGE_ROOT: /storage
-  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
-  MAX_PDF_PAGES: ${MAX_PDF_PAGES:-100}
-  PREVIEW_RENDER_SCALE: ${PREVIEW_RENDER_SCALE:-2.0}
+  PREPARATION_TIMEOUT_SECONDS: ${PREPARATION_TIMEOUT_SECONDS:-600}
+  TRANSLATION_HEARTBEAT_TIMEOUT_SECONDS: ${TRANSLATION_HEARTBEAT_TIMEOUT_SECONDS:-300}
+  TRANSLATION_QUEUE_RECOVERY_DELAY_SECONDS: ${TRANSLATION_QUEUE_RECOVERY_DELAY_SECONDS:-60}
+  TRANSLATION_CHECKPOINT_RETENTION_DAYS: ${TRANSLATION_CHECKPOINT_RETENTION_DAYS:-7}
+  GEMINI_DEFERRED_RETRY_JITTER_RATIO: ${GEMINI_DEFERRED_RETRY_JITTER_RATIO:-0.25}
+  GEMINI_DEFERRED_RETRY_JITTER_MAX_SECONDS: ${GEMINI_DEFERRED_RETRY_JITTER_MAX_SECONDS:-60}
+
+x-gemini-env: &gemini-env
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}
   GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
   GEMINI_TIMEOUT_SECONDS: ${GEMINI_TIMEOUT_SECONDS:-90}
@@ -25,16 +27,10 @@ x-backend-environment: &backend-environment
   GEMINI_SERVICE_RETRY_DELAYS_SECONDS: ${GEMINI_SERVICE_RETRY_DELAYS_SECONDS:-[60,300,900]}
   GEMINI_RATE_LIMIT_RETRY_DELAYS_SECONDS: ${GEMINI_RATE_LIMIT_RETRY_DELAYS_SECONDS:-[60,900,3600]}
   GEMINI_RETRY_HINT_MAX_SECONDS: ${GEMINI_RETRY_HINT_MAX_SECONDS:-86400}
-  GEMINI_DEFERRED_RETRY_JITTER_RATIO: ${GEMINI_DEFERRED_RETRY_JITTER_RATIO:-0.25}
-  GEMINI_DEFERRED_RETRY_JITTER_MAX_SECONDS: ${GEMINI_DEFERRED_RETRY_JITTER_MAX_SECONDS:-60}
-  TRANSLATION_HEARTBEAT_TIMEOUT_SECONDS: ${TRANSLATION_HEARTBEAT_TIMEOUT_SECONDS:-300}
-  TRANSLATION_QUEUE_RECOVERY_DELAY_SECONDS: ${TRANSLATION_QUEUE_RECOVERY_DELAY_SECONDS:-60}
-  TRANSLATION_CHECKPOINT_RETENTION_DAYS: ${TRANSLATION_CHECKPOINT_RETENTION_DAYS:-7}
 
 x-backend-service: &backend-service
   build:
     context: ./backend
-  environment: *backend-environment
   volumes:
     - ./storage:/storage
   depends_on:
@@ -58,6 +54,15 @@ services:
   api:
     <<: *backend-service
     command: sh -c "alembic upgrade head && fastapi run app/main.py --port 8000"
+    environment:
+      <<: *backend-core-env
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      SESSION_SECRET: ${SESSION_SECRET:-development-only-session-secret-change-me}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
+      MAX_PDF_PAGES: ${MAX_PDF_PAGES:-100}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
     ports:
       - "8000:8000"
     healthcheck:
@@ -74,14 +79,19 @@ services:
   worker:
     <<: *backend-service
     command: celery --app app.tasks.celery_app worker --loglevel=INFO --concurrency=1
+    environment:
+      <<: [*backend-core-env, *gemini-env]
+      PREVIEW_RENDER_SCALE: ${PREVIEW_RENDER_SCALE:-2.0}
 
   maintenance:
     <<: *backend-service
     command: celery --app app.tasks.celery_app worker --loglevel=INFO --concurrency=1 --queues=maintenance
+    environment: *backend-core-env
 
   beat:
     <<: *backend-service
     command: celery --app app.tasks.celery_app beat --loglevel=INFO --schedule=/tmp/celerybeat-schedule
+    environment: *backend-core-env
 
   postgres:
     image: postgres:17-alpine
