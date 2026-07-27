@@ -42,7 +42,9 @@ storage/originals/*
 storage/previews/*
 storage/results/*
 storage/temporary/*
+storage/translations/*
 !storage/originals/.gitkeep
 !storage/previews/.gitkeep
 !storage/results/.gitkeep
 !storage/temporary/.gitkeep
+!storage/translations/.gitkeep
