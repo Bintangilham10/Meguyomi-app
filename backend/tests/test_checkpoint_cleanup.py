@@ -103,6 +103,12 @@ def test_cleanup_removes_only_expired_failed_completed_and_orphaned_checkpoints(
     }
     unrelated_preview = tmp_path / "temporary" / "render.preview"
     unrelated_preview.mkdir(parents=True)
+    live_records = tmp_path / "translations" / completed_job_id
+    live_records.mkdir(parents=True)
+    (live_records / "page-0001.json").write_text('{"regions": []}')
+    orphaned_records = tmp_path / "translations" / str(uuid4())
+    orphaned_records.mkdir(parents=True)
+    (orphaned_records / "page-0001.json").write_text('{"regions": []}')
 
     result = cleanup_translation_checkpoints(
         session_factory,
@@ -110,13 +116,20 @@ def test_cleanup_removes_only_expired_failed_completed_and_orphaned_checkpoints(
         now=now,
     )
 
-    assert result == {"expired": 1, "completed": 1, "orphaned": 1}
+    assert result == {
+        "expired": 1,
+        "completed": 1,
+        "orphaned": 1,
+        "orphanedRecords": 1,
+    }
     assert not checkpoints[expired_job_id].exists()
     assert checkpoints[young_job_id].is_dir()
     assert checkpoints[active_job_id].is_dir()
     assert not checkpoints[completed_job_id].exists()
     assert not checkpoints[orphaned_job_id].exists()
     assert unrelated_preview.is_dir()
+    assert live_records.is_dir()
+    assert not orphaned_records.exists()
     with session_factory() as session:
         expired_job = session.get(TranslationJob, expired_job_id)
         assert expired_job is not None
