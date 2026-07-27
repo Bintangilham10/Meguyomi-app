@@ -76,6 +76,19 @@ test("parseJobListResponse accepts every preparation status", () => {
 });
 
 
+test("parseJobResponse accepts watchdog retry wait with zero attempts", () => {
+  const job = {
+    ...validJob,
+    status: "TRANSLATION_RETRY_WAIT",
+    translationRetryAttempt: 0,
+    translationNextRetryAt: "2026-07-23T12:30:00Z",
+    translationWaitReason: "worker_recovery",
+  };
+
+  assert.deepEqual(parseJobResponse(job), job);
+});
+
+
 test("parseJobListResponse rejects malformed job data", () => {
   assert.equal(
     parseJobListResponse({
