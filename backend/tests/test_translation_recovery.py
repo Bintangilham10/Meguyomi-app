@@ -90,7 +90,12 @@ def test_recovery_dispatches_due_job_and_recovers_stale_worker(
         jitter=lambda _start, _end: 0,
     )
 
-    assert counts == {"recovered": 1, "dispatched": 1, "dispatchFailed": 0}
+    assert counts == {
+        "preparationRecovered": 0,
+        "recovered": 1,
+        "dispatched": 1,
+        "dispatchFailed": 0,
+    }
     assert dispatched == [due_id]
     with session_factory() as session:
         due = session.get(TranslationJob, due_id)
@@ -137,7 +142,12 @@ def test_recovery_does_not_touch_fresh_or_normally_queued_jobs(
         jitter=lambda _start, _end: 0,
     )
 
-    assert counts == {"recovered": 0, "dispatched": 0, "dispatchFailed": 0}
+    assert counts == {
+        "preparationRecovered": 0,
+        "recovered": 0,
+        "dispatched": 0,
+        "dispatchFailed": 0,
+    }
     with session_factory() as session:
         assert session.get(TranslationJob, fresh_id).status == JobStatus.TRANSLATING
         assert (
@@ -171,7 +181,12 @@ def test_dispatch_failure_returns_job_to_future_wait_without_spending_attempt(
         jitter=lambda _start, _end: 0,
     )
 
-    assert counts == {"recovered": 0, "dispatched": 0, "dispatchFailed": 1}
+    assert counts == {
+        "preparationRecovered": 0,
+        "recovered": 0,
+        "dispatched": 0,
+        "dispatchFailed": 1,
+    }
     with session_factory() as session:
         job = session.get(TranslationJob, job_id)
         assert job is not None
@@ -181,6 +196,68 @@ def test_dispatch_failure_returns_job_to_future_wait_without_spending_attempt(
         assert job.translation_next_retry_at == now.replace(
             tzinfo=None
         ) + timedelta(seconds=60)
+    engine.dispose()
+
+
+def add_processing_job(session_factory, *, started_at: datetime) -> str:
+    job_id = str(uuid4())
+    with session_factory() as session:
+        session.add(
+            TranslationJob(
+                id=job_id,
+                owner_username="owner",
+                original_filename="chapter.pdf",
+                stored_filename=f"{job_id}.pdf",
+                size_bytes=1_024,
+                page_count=1,
+                status=JobStatus.PROCESSING,
+                created_at=datetime.now(timezone.utc),
+                started_at=started_at,
+            )
+        )
+        session.commit()
+    return job_id
+
+
+def test_recovery_fails_stalled_preparation_but_keeps_fresh_one(
+    tmp_path: Path,
+) -> None:
+    engine, session_factory = make_session_factory()
+    settings = Settings(storage_root=tmp_path)
+    now = datetime(2026, 7, 23, 12, 0, tzinfo=timezone.utc)
+    stalled_id = add_processing_job(
+        session_factory,
+        started_at=now - timedelta(minutes=11),
+    )
+    fresh_id = add_processing_job(
+        session_factory,
+        started_at=now - timedelta(minutes=2),
+    )
+
+    counts = recover_translation_jobs(
+        session_factory,
+        settings,
+        dispatch=lambda _job_id: None,
+        now=now,
+        jitter=lambda _start, _end: 0,
+    )
+
+    assert counts == {
+        "preparationRecovered": 1,
+        "recovered": 0,
+        "dispatched": 0,
+        "dispatchFailed": 0,
+    }
+    with session_factory() as session:
+        stalled = session.get(TranslationJob, stalled_id)
+        fresh = session.get(TranslationJob, fresh_id)
+        assert stalled is not None
+        assert fresh is not None
+        assert stalled.status == JobStatus.FAILED
+        assert stalled.failure_code == "PREPARATION_FAILED"
+        assert stalled.can_retry_preparation is True
+        assert fresh.status == JobStatus.PROCESSING
+        assert fresh.failure_code is None
     engine.dispose()
 
 
