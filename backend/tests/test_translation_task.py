@@ -122,6 +122,12 @@ def test_translate_job_builds_pdf_and_marks_job_completed(tmp_path: Path) -> Non
     result_pdf = tmp_path / "results" / f"{job_id}.pdf"
     assert result_pdf.is_file()
     assert len(PdfReader(result_pdf).pages) == 2
+    records = tmp_path / "translations" / job_id
+    assert sorted(path.name for path in records.iterdir()) == [
+        "page-0001.json",
+        "page-0002.json",
+    ]
+    assert '"regions"' in (records / "page-0001.json").read_text(encoding="utf-8")
     engine.dispose()
 
 
@@ -206,6 +212,10 @@ def test_translate_job_resumes_from_first_unfinished_checkpoint(
         assert job.translated_page_count == 10
         assert job.checkpoint_updated_at is None
     assert not checkpoint_pages.parent.exists()
+    records = tmp_path / "translations" / job_id
+    assert sorted(path.name for path in records.iterdir()) == [
+        f"page-{page_number:04d}.json" for page_number in range(1, 11)
+    ]
     assert len(PdfReader(tmp_path / "results" / f"{job_id}.pdf").pages) == 10
     engine.dispose()
 
@@ -423,6 +433,9 @@ def test_translate_job_recovers_checkpoint_written_before_database_progress(
         checkpoint_pages / "page-0001.png",
         format="PNG",
     )
+    records_directory = tmp_path / "translations" / job_id
+    records_directory.mkdir(parents=True)
+    (records_directory / "page-0001.json").write_text('{"regions": []}')
     with session_factory() as session:
         job = session.get(TranslationJob, job_id)
         assert job is not None
@@ -459,6 +472,10 @@ def test_translate_job_restarts_at_first_corrupt_checkpoint(tmp_path: Path) -> N
         checkpoint_pages / "page-0003.png",
         format="PNG",
     )
+    records_directory = tmp_path / "translations" / job_id
+    records_directory.mkdir(parents=True)
+    for page_name in ("page-0001", "page-0002", "page-0003"):
+        (records_directory / f"{page_name}.json").write_text('{"regions": []}')
     with session_factory() as session:
         job = session.get(TranslationJob, job_id)
         assert job is not None
