@@ -38,9 +38,15 @@ export function JobList({ jobs, pagination, error }: JobListProps) {
         );
         return;
       }
-      if (!parseJobResponse(body)) {
+      const job = parseJobResponse(body);
+      if (!job) {
         setActionError("Respons pekerjaan terjemahan tidak valid.");
         return;
+      }
+      if (job.status === "FAILED" && job.failureCode === "QUEUE_UNAVAILABLE") {
+        setActionError(
+          "Antrean kerja masih tidak tersedia. Periksa layanan Redis lalu coba lagi.",
+        );
       }
       router.refresh();
     } catch {
@@ -64,9 +70,15 @@ export function JobList({ jobs, pagination, error }: JobListProps) {
         );
         return;
       }
-      if (!parseJobResponse(body)) {
+      const job = parseJobResponse(body);
+      if (!job) {
         setActionError("Respons pekerjaan terjemahan tidak valid.");
         return;
+      }
+      if (job.status === "FAILED" && job.failureCode === "QUEUE_UNAVAILABLE") {
+        setActionError(
+          "Antrean kerja masih tidak tersedia. Periksa layanan Redis lalu coba lagi.",
+        );
       }
       router.refresh();
     } catch {
