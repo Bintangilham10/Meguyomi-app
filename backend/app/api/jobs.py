@@ -260,8 +260,14 @@ def retry_preparation(
                 }
             )
         )
-        job.status = JobStatus.FAILED
-        job.failure_code = "QUEUE_UNAVAILABLE"
+        db.execute(
+            update(TranslationJob)
+            .where(
+                TranslationJob.id == normalized_job_id,
+                TranslationJob.status == JobStatus.QUEUED,
+            )
+            .values(status=JobStatus.FAILED, failure_code="QUEUE_UNAVAILABLE")
+        )
         db.commit()
         db.refresh(job)
 
