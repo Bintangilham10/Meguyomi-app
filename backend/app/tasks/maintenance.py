@@ -49,9 +49,10 @@ def cleanup_translation_checkpoints(
     now: datetime | None = None,
 ) -> dict[str, int]:
     reference_time = now or datetime.now(timezone.utc)
-    counts = {"expired": 0, "completed": 0, "orphaned": 0}
+    counts = {"expired": 0, "completed": 0, "orphaned": 0, "orphanedRecords": 0}
     temporary_root = (settings.storage_root / "temporary").resolve()
     temporary_root.mkdir(parents=True, exist_ok=True)
+    translations_root = (settings.storage_root / "translations").resolve()
 
     with session_factory() as session:
         failed_jobs = session.scalars(
@@ -101,6 +102,18 @@ def cleanup_translation_checkpoints(
             if _remove_checkpoint(checkpoint, job_id):
                 counts["orphaned"] += 1
 
+        if translations_root.is_dir():
+            for records in translations_root.iterdir():
+                if not records.is_dir():
+                    continue
+                job_id = normalize_job_id(records.name)
+                if job_id is None:
+                    continue
+                if session.get(TranslationJob, job_id) is not None:
+                    continue
+                if _remove_checkpoint(records, job_id):
+                    counts["orphanedRecords"] += 1
+
     logger.info(
         json.dumps(
             {
@@ -108,6 +121,7 @@ def cleanup_translation_checkpoints(
                 "expiredJobs": counts["expired"],
                 "completedJobs": counts["completed"],
                 "orphanedCheckpoints": counts["orphaned"],
+                "orphanedRecords": counts["orphanedRecords"],
             }
         )
     )
@@ -150,7 +164,33 @@ def recover_translation_jobs(
     stale_before = reference_time - timedelta(
         seconds=settings.translation_heartbeat_timeout_seconds
     )
-    counts = {"recovered": 0, "dispatched": 0, "dispatchFailed": 0}
+    preparation_stale_before = reference_time - timedelta(
+        seconds=settings.preparation_timeout_seconds
+    )
+    counts = {
+        "preparationRecovered": 0,
+        "recovered": 0,
+        "dispatched": 0,
+        "dispatchFailed": 0,
+    }
+
+    with session_factory() as session:
+        stalled_preparations = session.scalars(
+            select(TranslationJob)
+            .where(
+                TranslationJob.status == JobStatus.PROCESSING,
+                TranslationJob.started_at.is_not(None),
+                TranslationJob.started_at <= preparation_stale_before,
+            )
+            .order_by(TranslationJob.started_at.asc())
+            .limit(100)
+            .with_for_update(skip_locked=True)
+        ).all()
+        for job in stalled_preparations:
+            job.status = JobStatus.FAILED
+            job.failure_code = "PREPARATION_FAILED"
+            counts["preparationRecovered"] += 1
+        session.commit()
 
     with session_factory() as session:
         stale_jobs = session.scalars(
@@ -241,6 +281,7 @@ def recover_translation_jobs(
         json.dumps(
             {
                 "event": "translation_retry_recovery_completed",
+                "preparationRecoveredJobs": counts["preparationRecovered"],
                 "recoveredJobs": counts["recovered"],
                 "dispatchedJobs": counts["dispatched"],
                 "dispatchFailedJobs": counts["dispatchFailed"],
