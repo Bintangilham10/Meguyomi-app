@@ -47,6 +47,7 @@ def remove_job_artifacts(settings: Settings, job_id: str) -> None:
             storage_root / "temporary" / f"{normalized_job_id}.translation",
             True,
         ),
+        (storage_root / "translations" / normalized_job_id, True),
     )
 
     try:
