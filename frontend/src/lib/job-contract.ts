@@ -68,8 +68,7 @@ function isTranslationJob(value: unknown): value is TranslationJob {
       /(Z|[+-]\d{2}:\d{2})$/i.test(value.translationNextRetryAt));
   const retryWaitValid =
     value.status !== "TRANSLATION_RETRY_WAIT" ||
-    (Number(value.translationRetryAttempt) > 0 &&
-      value.translationWaitReason !== null &&
+    (value.translationWaitReason !== null &&
       value.translationNextRetryAt !== null);
 
   return (
