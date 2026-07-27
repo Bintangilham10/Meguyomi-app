@@ -86,6 +86,26 @@ def test_prepare_translation_job_renders_pages_and_marks_ready(
     engine.dispose()
 
 
+def test_prepare_translation_job_replaces_stale_preview_directory(
+    tmp_path: Path,
+) -> None:
+    engine, session_factory = make_session_factory()
+    settings = Settings(storage_root=tmp_path, preview_render_scale=1.0)
+    job_id = add_queued_job(session_factory, tmp_path, source_exists=True)
+    stale_destination = tmp_path / "previews" / job_id
+    stale_destination.mkdir(parents=True)
+    (stale_destination / "page-9999.png").write_bytes(b"stale preview")
+
+    result = prepare_translation_job(job_id, session_factory, settings)
+
+    assert result == JobStatus.READY_FOR_TRANSLATION
+    assert sorted(path.name for path in stale_destination.iterdir()) == [
+        "page-0001.png",
+        "page-0002.png",
+    ]
+    engine.dispose()
+
+
 def test_prepare_translation_job_marks_missing_source_as_failed(
     tmp_path: Path,
 ) -> None:
