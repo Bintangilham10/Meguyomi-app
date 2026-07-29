@@ -127,19 +127,19 @@ export function JobList({ jobs, pagination, error }: JobListProps) {
 
   if (error) {
     return (
-      <div role="alert" className="mt-6 border border-[var(--danger)] bg-[var(--surface)] p-5">
-        <p className="font-semibold">Riwayat belum dapat ditampilkan</p>
-        <p className="mt-1 text-sm leading-6 text-[var(--muted)]">{error}</p>
+      <div role="alert" className="mt-6 rounded-[14px] bg-[var(--accent-wash)] p-5 text-[var(--accent-strong)]">
+        <p className="font-bold">Meja pekerjaan belum dapat dibuka</p>
+        <p className="mt-1 text-sm leading-6">{error}</p>
       </div>
     );
   }
 
   if (jobs.length === 0) {
     return (
-      <div role="status" className="mt-6 border border-dashed border-[var(--border-strong)] p-8">
-        <p className="font-semibold">Belum ada pekerjaan terjemahan</p>
-        <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-          PDF yang berhasil diunggah akan muncul di sini.
+      <div role="status" className="paper-halftone mt-6 rounded-[14px] border border-dashed border-[var(--border-strong)] p-8 sm:p-10">
+        <p className="display-face text-2xl">Rak kerja masih kosong.</p>
+        <p className="mt-2 max-w-md text-sm leading-6 text-[var(--muted)]">
+          Unggah satu PDF. Status persiapan dan terjemahannya akan muncul di bagian ini.
         </p>
       </div>
     );
@@ -148,13 +148,13 @@ export function JobList({ jobs, pagination, error }: JobListProps) {
   return (
     <>
       {actionError ? (
-        <p role="alert" className="mt-5 text-sm text-[var(--danger)]">
+        <p role="alert" className="mt-5 rounded-[10px] bg-[var(--accent-wash)] px-4 py-3 text-sm font-medium text-[var(--danger)]">
           {actionError}
         </p>
       ) : null}
       <ol
         aria-live="polite"
-        className="mt-6 divide-y divide-[var(--border)] border-y border-[var(--border)]"
+        className="mt-2 divide-y divide-[var(--border)]"
       >
         {jobs.map((job) => (
           <JobListItem
