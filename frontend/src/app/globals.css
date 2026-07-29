@@ -1,32 +1,155 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f7f5ef;
-  --foreground: #1f2420;
-  --surface: #ffffff;
-  --border: #d8d6ce;
-  --border-strong: #a9aca5;
-  --accent: #1f6b4f;
-  --accent-strong: #174f3b;
-  --accent-soft: #b8d7ca;
-  --muted: #626862;
-  --danger: #a33232;
-  --ink: #17231e;
-  --ink-muted: #b8c6bf;
-  --mint: #8ed3b7;
+  --background: #eef0ed;
+  --foreground: #17181b;
+  --surface: #fafbf8;
+  --surface-strong: #ffffff;
+  --border: #c9cbc6;
+  --border-strong: #8e918d;
+  --accent: #e74749;
+  --accent-strong: #b9272d;
+  --accent-soft: #ffc8c5;
+  --accent-wash: #fff0ee;
+  --muted: #62656b;
+  --danger: #b9272d;
+  --ink: #17181b;
+  --ink-soft: #2a2c31;
+  --ink-muted: #c9cbd0;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html {
+  background: var(--background);
+}
+
 body {
   margin: 0;
-  background: var(--background);
+  min-width: 320px;
+  background:
+    radial-gradient(circle at 12% 4%, rgb(255 255 255 / 0.8), transparent 30rem),
+    var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  text-rendering: optimizeLegibility;
 }
 
 a {
   color: inherit;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button,
+a,
+label,
+input {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: var(--accent);
+  color: white;
+}
+
+.skip-link {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 50;
+  transform: translateY(-200%);
+  border-radius: 0.625rem;
+  background: var(--ink);
+  padding: 0.75rem 1rem;
+  color: white;
+  font-weight: 700;
+  transition: transform 180ms ease;
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+.display-face {
+  font-family: "Arial Black", "Arial Narrow", Arial, Helvetica, sans-serif;
+  letter-spacing: -0.035em;
+}
+
+.brand-shadow {
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+.brand-shadow:hover {
+  box-shadow: 2px 2px 0 var(--ink);
+  transform: translate(2px, 2px);
+}
+
+.brand-shadow:active {
+  box-shadow: 0 0 0 var(--ink);
+  transform: translate(4px, 4px);
+}
+
+.halftone {
+  background-image: radial-gradient(circle, rgb(255 255 255 / 0.22) 1.1px, transparent 1.1px);
+  background-size: 10px 10px;
+}
+
+.paper-halftone {
+  background-image: radial-gradient(circle, rgb(23 24 27 / 0.1) 0.9px, transparent 0.9px);
+  background-size: 8px 8px;
+}
+
+.job-progress {
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: #dfe1dc;
+}
+
+.job-progress::-webkit-progress-bar {
+  background: #dfe1dc;
+}
+
+.job-progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.job-progress::-moz-progress-bar {
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .mascot-float {
+    animation: mascot-float 5.5s ease-in-out infinite;
+  }
+}
+
+@keyframes mascot-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-0.5deg);
+  }
+
+  50% {
+    transform: translateY(-10px) rotate(0.5deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
