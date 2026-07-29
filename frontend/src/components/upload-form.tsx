@@ -98,12 +98,12 @@ export function UploadForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mt-6" noValidate>
+    <form onSubmit={handleSubmit} className="mt-8" noValidate>
       <label
         htmlFor="manga-pdf"
-        className="block border border-dashed border-[var(--border-strong)] bg-[var(--background)] p-6 transition focus-within:border-[var(--accent)] sm:p-8"
+        className="paper-halftone group block cursor-pointer rounded-[14px] border-2 border-dashed border-[var(--border-strong)] bg-[var(--background)] p-5 transition hover:border-[var(--ink)] focus-within:border-[var(--accent)] focus-within:outline-2 focus-within:outline-offset-4 focus-within:outline-[var(--accent)] sm:p-6"
       >
-        <span className="block text-base font-semibold">Pilih PDF manga</span>
+        <span className="block text-lg font-bold">Taruh bab manga di meja</span>
         <span id="pdf-help" className="mt-2 block text-sm leading-6 text-[var(--muted)]">
           PDF Jepang, maksimal 50 MB dan 100 halaman. PDF terenkripsi tidak didukung.
         </span>
@@ -116,10 +116,10 @@ export function UploadForm() {
           aria-describedby="pdf-help"
           disabled={isUploading}
           onChange={handleFileChange}
-          className="mt-5 block w-full text-sm text-[var(--muted)] file:mr-4 file:border file:border-[var(--border-strong)] file:bg-[var(--surface)] file:px-4 file:py-2 file:font-semibold file:text-[var(--foreground)] hover:file:border-[var(--accent)] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--accent)] disabled:opacity-60"
+          className="mt-5 block w-full text-sm text-[var(--muted)] file:mr-4 file:cursor-pointer file:rounded-[10px] file:border file:border-[var(--ink)] file:bg-[var(--surface)] file:px-4 file:py-2.5 file:font-bold file:text-[var(--foreground)] hover:file:bg-[var(--ink)] hover:file:text-white focus-visible:outline-none disabled:opacity-60"
         />
         {selectedName ? (
-          <span className="mt-4 block break-all text-sm font-medium text-[var(--foreground)]">
+          <span className="mt-4 block w-fit max-w-full break-all rounded-[8px] bg-[var(--surface)] px-3 py-2 text-sm font-bold text-[var(--foreground)]">
             Terpilih: {selectedName}
           </span>
         ) : null}
@@ -129,17 +129,17 @@ export function UploadForm() {
         <button
           type="submit"
           disabled={isUploading}
-          className="inline-flex min-h-11 items-center justify-center bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[var(--accent-strong)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
+          className="brand-shadow inline-flex min-h-12 shrink-0 items-center justify-center rounded-[10px] border border-[var(--ink)] bg-[var(--accent)] px-6 py-3 text-sm font-bold text-white transition focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none disabled:transform-none"
         >
-          {isUploading ? "Mengunggah dan memeriksa…" : "Unggah PDF"}
+          {isUploading ? "Mengunggah dan memeriksa..." : "Unggah PDF"}
         </button>
         <p
           role={feedback?.kind === "error" ? "alert" : "status"}
           aria-live="polite"
           className={
             feedback?.kind === "error"
-              ? "text-sm text-[var(--danger)]"
-              : "text-sm text-[var(--accent-strong)]"
+              ? "text-sm font-medium leading-6 text-[var(--danger)]"
+              : "text-sm leading-6 text-[var(--muted)]"
           }
         >
           {feedback?.message ?? "File asli disimpan privat di server Meguyomi."}
