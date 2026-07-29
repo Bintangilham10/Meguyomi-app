@@ -14,7 +14,7 @@ export function LoginForm() {
   return (
     <form action={formAction} className="mt-8 space-y-5">
       <div>
-        <label htmlFor="username" className="block text-sm font-semibold">
+        <label htmlFor="username" className="block text-sm font-bold">
           Username
         </label>
         <input
@@ -25,12 +25,12 @@ export function LoginForm() {
           required
           maxLength={64}
           autoFocus
-          className="mt-2 w-full border border-[var(--border)] bg-[var(--surface)] px-3 py-3 text-base outline-none transition focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+          className="mt-2 w-full rounded-[10px] border border-[var(--border-strong)] bg-[var(--surface-strong)] px-4 py-3.5 text-base outline-none transition focus:border-[var(--ink)] focus:ring-2 focus:ring-[var(--accent-soft)]"
         />
       </div>
 
       <div>
-        <label htmlFor="password" className="block text-sm font-semibold">
+        <label htmlFor="password" className="block text-sm font-bold">
           Password
         </label>
         <input
@@ -40,12 +40,15 @@ export function LoginForm() {
           autoComplete="current-password"
           required
           maxLength={256}
-          className="mt-2 w-full border border-[var(--border)] bg-[var(--surface)] px-3 py-3 text-base outline-none transition focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+          className="mt-2 w-full rounded-[10px] border border-[var(--border-strong)] bg-[var(--surface-strong)] px-4 py-3.5 text-base outline-none transition focus:border-[var(--ink)] focus:ring-2 focus:ring-[var(--accent-soft)]"
         />
       </div>
 
       {state.error ? (
-        <p role="alert" className="border-l-2 border-[var(--danger)] pl-3 text-sm text-[var(--danger)]">
+        <p
+          role="alert"
+          className="rounded-[10px] bg-[var(--accent-wash)] px-4 py-3 text-sm font-medium text-[var(--danger)]"
+        >
           {state.error}
         </p>
       ) : null}
@@ -53,7 +56,7 @@ export function LoginForm() {
       <button
         type="submit"
         disabled={isPending}
-        className="w-full bg-[var(--accent)] px-4 py-3 font-semibold text-white transition hover:bg-[var(--accent-strong)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
+        className="brand-shadow min-h-12 w-full rounded-[10px] border border-[var(--ink)] bg-[var(--accent)] px-4 py-3 font-bold text-white transition focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none disabled:transform-none"
       >
         {isPending ? "Memeriksa..." : "Masuk"}
       </button>
