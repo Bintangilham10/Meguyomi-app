@@ -4,15 +4,20 @@ import "./globals.css";
 
 
 export const metadata: Metadata = {
-  title: "Meguyomi",
-  description: "Penerjemah manga PDF Jepang ke bahasa Indonesia.",
+  title: "Meguyomi | Manga Translation Desk",
+  description: "Workspace privat untuk menerjemahkan manga PDF Jepang ke bahasa Indonesia.",
 };
 
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="id">
-      <body>{children}</body>
+      <body>
+        <a className="skip-link" href="#main-content">
+          Lewati ke konten
+        </a>
+        {children}
+      </body>
     </html>
   );
 }
