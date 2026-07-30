@@ -14,7 +14,7 @@ x-backend-core-env: &backend-core-env
 
 x-gemini-env: &gemini-env
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
+  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
   GEMINI_TIMEOUT_SECONDS: ${GEMINI_TIMEOUT_SECONDS:-90}
   GEMINI_MAX_IMAGE_BYTES: ${GEMINI_MAX_IMAGE_BYTES:-13631488}
   GEMINI_MAX_RESPONSE_BYTES: ${GEMINI_MAX_RESPONSE_BYTES:-2097152}
@@ -62,7 +62,7 @@ services:
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
       MAX_PDF_PAGES: ${MAX_PDF_PAGES:-100}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
     ports:
       - "8000:8000"
     healthcheck:
