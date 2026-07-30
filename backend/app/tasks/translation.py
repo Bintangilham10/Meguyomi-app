@@ -32,6 +32,7 @@ from app.tasks.preparation import normalize_job_id
 SessionFactory = Callable[[], Session]
 RetryJitter = Callable[[float, float], float]
 logger = logging.getLogger(__name__)
+TRANSLATION_RENDER_VERSION = "2"
 
 
 class PageTranslator(Protocol):
@@ -384,10 +385,39 @@ def checkpoint_page_is_valid(checkpoint: Path, preview: Path) -> bool:
 
 def checkpoint_record_is_valid(record_path: Path) -> bool:
     try:
-        json.loads(record_path.read_text(encoding="utf-8"))
+        PageTranslation.model_validate_json(
+            record_path.read_text(encoding="utf-8")
+        )
     except (OSError, ValueError):
         return False
     return True
+
+
+def ensure_checkpoint_render_version(
+    checkpoint_pages: Path,
+    records_directory: Path,
+) -> None:
+    checkpoint_root = checkpoint_pages.parent
+    version_path = checkpoint_root / ".render-version"
+    try:
+        current_version = version_path.read_text(encoding="ascii").strip()
+    except OSError:
+        current_version = ""
+    if current_version == TRANSLATION_RENDER_VERSION:
+        return
+
+    if checkpoint_pages.exists():
+        rmtree(checkpoint_pages)
+    if records_directory.exists():
+        rmtree(records_directory)
+    checkpoint_pages.mkdir(parents=True, exist_ok=True)
+    records_directory.mkdir(parents=True, exist_ok=True)
+    partial_version = checkpoint_root / ".render-version.part"
+    partial_version.write_text(
+        TRANSLATION_RENDER_VERSION,
+        encoding="ascii",
+    )
+    partial_version.replace(version_path)
 
 
 def reconcile_translation_checkpoints(
@@ -397,6 +427,10 @@ def reconcile_translation_checkpoints(
     preview_pages: list[Path],
     records_directory: Path,
 ) -> list[Path]:
+    ensure_checkpoint_render_version(
+        checkpoint_pages,
+        records_directory,
+    )
     checkpoint_pages.mkdir(parents=True, exist_ok=True)
     for partial in checkpoint_pages.glob("*.part"):
         partial.unlink(missing_ok=True)
