@@ -61,6 +61,40 @@ def test_page_translation_rejects_more_than_eighty_regions() -> None:
         PageTranslation.model_validate({"regions": [region] * 81})
 
 
+def test_page_translation_accepts_legacy_region_without_placement_metadata() -> None:
+    translation = PageTranslation.model_validate(
+        {
+            "regions": [
+                {
+                    "box_2d": [100, 200, 400, 800],
+                    "source_text": "\u3053\u3093\u306b\u3061\u306f",
+                    "translated_text": "Halo",
+                }
+            ]
+        }
+    )
+
+    assert translation.regions[0].placement_box_2d is None
+    assert translation.regions[0].region_type is None
+
+
+def test_page_translation_rejects_invalid_placement_coordinates() -> None:
+    with pytest.raises(ValidationError):
+        PageTranslation.model_validate(
+            {
+                "regions": [
+                    {
+                        "box_2d": [100, 200, 400, 800],
+                        "placement_box_2d": [500, 200, 400, 800],
+                        "region_type": "dialogue",
+                        "source_text": "\u3053\u3093\u306b\u3061\u306f",
+                        "translated_text": "Halo",
+                    }
+                ]
+            }
+        )
+
+
 def test_gemini_translator_sends_bounded_structured_request(tmp_path: Path) -> None:
     page_path = tmp_path / "page.png"
     make_page(page_path)
@@ -77,6 +111,8 @@ def test_gemini_translator_sends_bounded_structured_request(tmp_path: Path) -> N
                 "regions": [
                     {
                         "box_2d": [100, 200, 400, 800],
+                        "placement_box_2d": [80, 150, 450, 850],
+                        "region_type": "dialogue",
                         "source_text": "こんにちは",
                         "translated_text": "Halo",
                     }
@@ -86,7 +122,7 @@ def test_gemini_translator_sends_bounded_structured_request(tmp_path: Path) -> N
 
     translator = GeminiPageTranslator(
         api_key="test-key",
-        model="gemini-3.5-flash",
+        model="gemini-3.6-flash",
         timeout_seconds=30,
         max_image_bytes=1_000_000,
         max_response_bytes=100_000,
@@ -96,9 +132,13 @@ def test_gemini_translator_sends_bounded_structured_request(tmp_path: Path) -> N
     result = translator.translate_page(page_path)
 
     assert result.regions[0].translated_text == "Halo"
+    assert result.regions[0].placement_box_2d == (80, 150, 450, 850)
+    assert result.regions[0].region_type == "dialogue"
     request = captured["request"]
     assert isinstance(request, Request)
-    assert request.full_url.endswith("/models/gemini-3.5-flash:generateContent")
+    assert request.full_url.endswith(
+        "/models/gemini-3.6-flash:generateContent"
+    )
     assert request.get_header("X-goog-api-key") == "test-key"
     payload = json.loads(request.data or b"{}")
     assert payload["generationConfig"]["responseMimeType"] == "application/json"
@@ -124,9 +164,31 @@ def test_gemini_translator_sends_bounded_structured_request(tmp_path: Path) -> N
         "minItems": 4,
         "maxItems": 4,
     }
+    region_properties = regions_schema["items"]["properties"]
+    assert region_properties["placement_box_2d"] == box_schema
+    assert region_properties["region_type"] == {
+        "type": "string",
+        "enum": ["dialogue", "caption", "sfx", "title"],
+    }
+    assert regions_schema["items"]["required"] == [
+        "box_2d",
+        "placement_box_2d",
+        "region_type",
+        "source_text",
+        "translated_text",
+    ]
     assert payload["contents"][0]["parts"][0]["inline_data"]["mime_type"] == (
         "image/png"
     )
+    prompt = payload["contents"][0]["parts"][1]["text"]
+    assert "detect every visible Japanese string" in prompt
+    assert "all sound effects or onomatopoeia" in prompt
+    assert "glyph, outline, shadow, and punctuation mark" in prompt
+    assert "same speech balloon into one dialogue region" in prompt
+    assert "placement_box_2d" in prompt
+    assert "should normally be larger than box_2d" in prompt
+    assert "other placement boxes" in prompt
+    assert "concise, natural Indonesian" in prompt
     assert captured["timeout"] == 30
     assert captured["max_response_bytes"] == 100_000
 
