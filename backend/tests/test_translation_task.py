@@ -429,6 +429,10 @@ def test_translate_job_recovers_checkpoint_written_before_database_progress(
         tmp_path / "temporary" / f"{job_id}.translation" / "pages"
     )
     checkpoint_pages.mkdir(parents=True)
+    (checkpoint_pages.parent / ".render-version").write_text(
+        translation_module.TRANSLATION_RENDER_VERSION,
+        encoding="ascii",
+    )
     Image.new("RGB", (120, 160), "white").save(
         checkpoint_pages / "page-0001.png",
         format="PNG",
@@ -455,6 +459,45 @@ def test_translate_job_recovers_checkpoint_written_before_database_progress(
     engine.dispose()
 
 
+def test_translate_job_invalidates_outdated_render_checkpoints(
+    tmp_path: Path,
+) -> None:
+    engine, session_factory = make_session_factory()
+    settings = Settings(storage_root=tmp_path)
+    job_id = add_translation_job(session_factory, tmp_path, page_count=2)
+    checkpoint_pages = (
+        tmp_path / "temporary" / f"{job_id}.translation" / "pages"
+    )
+    checkpoint_pages.mkdir(parents=True)
+    (checkpoint_pages.parent / ".render-version").write_text(
+        "1",
+        encoding="ascii",
+    )
+    Image.new("RGB", (120, 160), "white").save(
+        checkpoint_pages / "page-0001.png",
+        format="PNG",
+    )
+    records_directory = tmp_path / "translations" / job_id
+    records_directory.mkdir(parents=True)
+    (records_directory / "page-0001.json").write_text(
+        '{"regions": []}',
+        encoding="utf-8",
+    )
+    with session_factory() as session:
+        job = session.get(TranslationJob, job_id)
+        assert job is not None
+        job.translated_page_count = 1
+        job.checkpoint_updated_at = datetime.now(timezone.utc)
+        session.commit()
+    translator = FakeTranslator()
+
+    result = translate_job(job_id, session_factory, settings, translator)
+
+    assert result == JobStatus.COMPLETED
+    assert translator.pages == ["page-0001.png", "page-0002.png"]
+    engine.dispose()
+
+
 def test_translate_job_restarts_at_first_corrupt_checkpoint(tmp_path: Path) -> None:
     engine, session_factory = make_session_factory()
     settings = Settings(storage_root=tmp_path)
@@ -463,6 +506,10 @@ def test_translate_job_restarts_at_first_corrupt_checkpoint(tmp_path: Path) -> N
         tmp_path / "temporary" / f"{job_id}.translation" / "pages"
     )
     checkpoint_pages.mkdir(parents=True)
+    (checkpoint_pages.parent / ".render-version").write_text(
+        translation_module.TRANSLATION_RENDER_VERSION,
+        encoding="ascii",
+    )
     Image.new("RGB", (120, 160), "white").save(
         checkpoint_pages / "page-0001.png",
         format="PNG",
