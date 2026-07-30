@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     max_preview_bytes: int = 512 * 1024 * 1024
     gemini_api_key: str = ""
     gemini_model: str = Field(
-        default="gemini-3.5-flash",
+        default="gemini-3.6-flash",
         pattern=r"^[A-Za-z0-9._-]+$",
     )
     gemini_timeout_seconds: float = Field(default=90.0, ge=5.0, le=300.0)
