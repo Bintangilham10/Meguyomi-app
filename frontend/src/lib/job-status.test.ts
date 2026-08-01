@@ -28,6 +28,14 @@ test("getJobStatusPresentation describes every translation state", () => {
     ).label,
     "Menunggu layanan AI",
   );
+  assert.equal(
+    getJobStatusPresentation("TRANSLATION_STOPPING").label,
+    "Menghentikan",
+  );
+  assert.equal(
+    getJobStatusPresentation("TRANSLATION_STOPPED").label,
+    "Dihentikan",
+  );
   assert.equal(getJobStatusPresentation("COMPLETED").label, "Selesai");
   assert.equal(getJobStatusPresentation("FAILED").label, "Gagal diproses");
 });
@@ -114,6 +122,14 @@ test("shouldShowTranslationProgress keeps checkpoint progress visible", () => {
     true,
   );
   assert.equal(shouldShowTranslationProgress("FAILED", 7), true);
+  assert.equal(
+    shouldShowTranslationProgress("TRANSLATION_STOPPING", 7),
+    true,
+  );
+  assert.equal(
+    shouldShowTranslationProgress("TRANSLATION_STOPPED", 7),
+    true,
+  );
   assert.equal(shouldShowTranslationProgress("FAILED", 0), false);
   assert.equal(shouldShowTranslationProgress("COMPLETED", 10), false);
 });
@@ -125,6 +141,8 @@ test("shouldRefreshJobStatus only polls active jobs", () => {
   assert.equal(shouldRefreshJobStatus("TRANSLATION_QUEUED"), true);
   assert.equal(shouldRefreshJobStatus("TRANSLATING"), true);
   assert.equal(shouldRefreshJobStatus("TRANSLATION_RETRY_WAIT"), true);
+  assert.equal(shouldRefreshJobStatus("TRANSLATION_STOPPING"), true);
+  assert.equal(shouldRefreshJobStatus("TRANSLATION_STOPPED"), false);
   assert.equal(shouldRefreshJobStatus("READY_FOR_TRANSLATION"), false);
   assert.equal(shouldRefreshJobStatus("COMPLETED"), false);
   assert.equal(shouldRefreshJobStatus("FAILED"), false);
