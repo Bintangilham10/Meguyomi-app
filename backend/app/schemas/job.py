@@ -39,6 +39,7 @@ class JobResponse(BaseModel):
     completed_at: datetime | None = None
     failure_code: str | None = None
     result_available: bool = False
+    can_resume_translation: bool = False
     can_retry_translation: bool = False
     can_retry_preparation: bool = False
 
