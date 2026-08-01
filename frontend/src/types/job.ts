@@ -5,6 +5,8 @@ export type TranslationJobStatus =
   | "TRANSLATION_QUEUED"
   | "TRANSLATING"
   | "TRANSLATION_RETRY_WAIT"
+  | "TRANSLATION_STOPPING"
+  | "TRANSLATION_STOPPED"
   | "COMPLETED"
   | "FAILED";
 
@@ -32,6 +34,7 @@ export interface TranslationJob {
   completedAt?: string | null;
   failureCode?: string | null;
   resultAvailable?: boolean;
+  canResumeTranslation: boolean;
   canRetryTranslation: boolean;
   canRetryPreparation: boolean;
 }
