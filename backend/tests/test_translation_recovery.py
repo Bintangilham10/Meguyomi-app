@@ -95,6 +95,8 @@ def test_recovery_dispatches_due_job_and_recovers_stale_worker(
         "recovered": 1,
         "dispatched": 1,
         "dispatchFailed": 0,
+        "stopDispatched": 0,
+        "stopDispatchFailed": 0,
     }
     assert dispatched == [due_id]
     with session_factory() as session:
@@ -147,6 +149,8 @@ def test_recovery_does_not_touch_fresh_or_normally_queued_jobs(
         "recovered": 0,
         "dispatched": 0,
         "dispatchFailed": 0,
+        "stopDispatched": 0,
+        "stopDispatchFailed": 0,
     }
     with session_factory() as session:
         assert session.get(TranslationJob, fresh_id).status == JobStatus.TRANSLATING
@@ -154,6 +158,90 @@ def test_recovery_does_not_touch_fresh_or_normally_queued_jobs(
             session.get(TranslationJob, queued_id).status
             == JobStatus.TRANSLATION_QUEUED
         )
+    engine.dispose()
+
+
+def test_recovery_redispatches_only_stale_stopping_jobs(tmp_path: Path) -> None:
+    engine, session_factory = make_session_factory()
+    settings = Settings(storage_root=tmp_path)
+    now = datetime(2026, 7, 23, 12, 0, tzinfo=timezone.utc)
+    stale_id = add_job(
+        session_factory,
+        status=JobStatus.TRANSLATION_STOPPING,
+        heartbeat_at=now - timedelta(minutes=6),
+    )
+    fresh_id = add_job(
+        session_factory,
+        status=JobStatus.TRANSLATION_STOPPING,
+        heartbeat_at=now - timedelta(minutes=2),
+    )
+    stop_dispatched: list[str] = []
+
+    counts = recover_translation_jobs(
+        session_factory,
+        settings,
+        dispatch=lambda _job_id: None,
+        dispatch_stop=stop_dispatched.append,
+        now=now,
+        jitter=lambda _start, _end: 0,
+    )
+
+    assert counts["stopDispatched"] == 1
+    assert counts["stopDispatchFailed"] == 0
+    assert stop_dispatched == [stale_id]
+    with session_factory() as session:
+        stale = session.get(TranslationJob, stale_id)
+        fresh = session.get(TranslationJob, fresh_id)
+        assert stale is not None
+        assert fresh is not None
+        assert stale.status == JobStatus.TRANSLATION_STOPPING
+        assert stale.translation_heartbeat_at == now.replace(tzinfo=None)
+        assert fresh.translation_heartbeat_at == (
+            now - timedelta(minutes=2)
+        ).replace(tzinfo=None)
+    engine.dispose()
+
+
+def test_stop_recovery_dispatch_failure_remains_retryable(tmp_path: Path) -> None:
+    engine, session_factory = make_session_factory()
+    settings = Settings(storage_root=tmp_path)
+    now = datetime(2026, 7, 23, 12, 0, tzinfo=timezone.utc)
+    job_id = add_job(
+        session_factory,
+        status=JobStatus.TRANSLATION_STOPPING,
+        heartbeat_at=None,
+    )
+    attempts: list[str] = []
+
+    def fail_stop_dispatch(dispatched_job_id: str) -> None:
+        attempts.append(dispatched_job_id)
+        raise ConnectionError("redis unavailable")
+
+    first_counts = recover_translation_jobs(
+        session_factory,
+        settings,
+        dispatch=lambda _job_id: None,
+        dispatch_stop=fail_stop_dispatch,
+        now=now,
+        jitter=lambda _start, _end: 0,
+    )
+    second_counts = recover_translation_jobs(
+        session_factory,
+        settings,
+        dispatch=lambda _job_id: None,
+        dispatch_stop=fail_stop_dispatch,
+        now=now + timedelta(seconds=30),
+        jitter=lambda _start, _end: 0,
+    )
+
+    assert first_counts["stopDispatchFailed"] == 1
+    assert second_counts["stopDispatchFailed"] == 1
+    assert attempts == [job_id, job_id]
+    with session_factory() as session:
+        job = session.get(TranslationJob, job_id)
+        assert job is not None
+        assert job.status == JobStatus.TRANSLATION_STOPPING
+        assert job.translation_heartbeat_at is None
     engine.dispose()
 
 
@@ -186,6 +274,8 @@ def test_dispatch_failure_returns_job_to_future_wait_without_spending_attempt(
         "recovered": 0,
         "dispatched": 0,
         "dispatchFailed": 1,
+        "stopDispatched": 0,
+        "stopDispatchFailed": 0,
     }
     with session_factory() as session:
         job = session.get(TranslationJob, job_id)
@@ -247,6 +337,8 @@ def test_recovery_fails_stalled_preparation_but_keeps_fresh_one(
         "recovered": 0,
         "dispatched": 0,
         "dispatchFailed": 0,
+        "stopDispatched": 0,
+        "stopDispatchFailed": 0,
     }
     with session_factory() as session:
         stalled = session.get(TranslationJob, stalled_id)
