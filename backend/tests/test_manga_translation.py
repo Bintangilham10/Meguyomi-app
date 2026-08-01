@@ -189,6 +189,10 @@ def test_gemini_translator_sends_bounded_structured_request(tmp_path: Path) -> N
     assert "should normally be larger than box_2d" in prompt
     assert "other placement boxes" in prompt
     assert "concise, natural Indonesian" in prompt
+    assert "horizontal Indonesian typesetting" in prompt
+    assert "Proofread Indonesian spelling" in prompt
+    assert "Never leave Japanese or other CJK characters" in prompt
+    assert "do not wrap sound effects in asterisks" in prompt
     assert captured["timeout"] == 30
     assert captured["max_response_bytes"] == 100_000
 
