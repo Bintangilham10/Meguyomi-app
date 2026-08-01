@@ -11,6 +11,7 @@ from app.services.translated_pdf import (
     _load_font,
     _normalize_display_text,
     _placement_candidates,
+    _source_text_mask,
     ResultBuildError,
     build_result_pdf,
     render_translated_page,
@@ -123,6 +124,21 @@ def test_render_translated_page_erases_tight_edge_touching_source(
             for y in range(source_area.height)
             for x in range(source_area.width)
         )
+
+
+def test_source_text_mask_keeps_interior_thin_cjk_stroke() -> None:
+    pixels = np.full((120, 120, 3), 255, dtype=np.uint8)
+    pixels[10:111, 20:23] = (0, 0, 0)
+    pixels[35:76, 55:59] = (28, 68, 136)
+
+    mask, succeeded = _source_text_mask(
+        pixels,
+        (20, 20, 100, 100),
+    )
+
+    assert succeeded is True
+    assert mask[55, 57] == 255
+    assert mask[55, 21] == 0
 
 
 def test_render_translated_page_preserves_art_inside_safe_placement(
