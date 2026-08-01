@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from shutil import rmtree
 from typing import Protocol
+from uuid import uuid4
 
 from PIL import Image
 from sqlalchemy import func, select, update
@@ -221,32 +222,64 @@ def mark_translation_failed(
         return result.rowcount == 1
 
 
-def mark_translation_completed(
+def clear_previous_translation_result(
     job_id: str,
     session_factory: SessionFactory,
-    result_filename: str,
+    result_path: Path,
 ) -> bool:
     with session_factory() as session:
-        result = session.execute(
-            update(TranslationJob)
+        job = session.scalar(
+            select(TranslationJob)
             .where(
                 TranslationJob.id == job_id,
                 TranslationJob.status == JobStatus.TRANSLATING,
             )
-            .values(
-                status=JobStatus.COMPLETED,
-                completed_at=datetime.now(timezone.utc),
-                result_filename=result_filename,
-                failure_code=None,
-                checkpoint_updated_at=None,
-                translation_retry_attempt=0,
-                translation_next_retry_at=None,
-                translation_wait_reason=None,
-                translation_heartbeat_at=None,
-            )
+            .with_for_update()
         )
+        if job is None:
+            return False
+        try:
+            result_path.unlink(missing_ok=True)
+        except OSError as error:
+            raise ResultBuildError("Previous result PDF could not be removed.") from error
         session.commit()
-        return result.rowcount == 1
+        return True
+
+
+def publish_translation_result(
+    job_id: str,
+    session_factory: SessionFactory,
+    temporary_result: Path,
+    result_path: Path,
+    result_filename: str,
+) -> bool:
+    with session_factory() as session:
+        job = session.scalar(
+            select(TranslationJob)
+            .where(
+                TranslationJob.id == job_id,
+                TranslationJob.status == JobStatus.TRANSLATING,
+            )
+            .with_for_update()
+        )
+        if job is None:
+            return False
+        try:
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_result.replace(result_path)
+        except OSError as error:
+            raise ResultBuildError("Result PDF could not be published.") from error
+        job.status = JobStatus.COMPLETED
+        job.completed_at = utc_now()
+        job.result_filename = result_filename
+        job.failure_code = None
+        job.checkpoint_updated_at = None
+        job.translation_retry_attempt = 0
+        job.translation_next_retry_at = None
+        job.translation_wait_reason = None
+        job.translation_heartbeat_at = None
+        session.commit()
+        return True
 
 
 def is_deferred_gemini_error(error: GeminiTranslationError) -> bool:
@@ -473,6 +506,203 @@ def reconcile_translation_checkpoints(
     return translated_pages
 
 
+def collect_stopped_checkpoint_pages(
+    settings: Settings,
+    job_id: str,
+    translated_page_count: int,
+) -> list[Path]:
+    if translated_page_count <= 0:
+        return []
+
+    checkpoint = resolve_checkpoint_directory(settings, job_id)
+    checkpoint_pages = checkpoint / "pages"
+    records_directory = resolve_translation_records_directory(settings, job_id)
+    version_path = checkpoint / ".render-version"
+    try:
+        render_version = version_path.read_text(encoding="ascii").strip()
+    except OSError:
+        return []
+    if render_version != TRANSLATION_RENDER_VERSION:
+        return []
+
+    preview_pages = resolve_preview_pages(
+        settings,
+        job_id,
+        translated_page_count,
+    )
+    stopped_pages: list[Path] = []
+    for preview_page in preview_pages:
+        checkpoint_page = checkpoint_pages / preview_page.name
+        record_path = records_directory / f"{preview_page.stem}.json"
+        if (
+            not checkpoint_page.is_file()
+            or not checkpoint_page_is_valid(checkpoint_page, preview_page)
+            or not checkpoint_record_is_valid(record_path)
+        ):
+            break
+        stopped_pages.append(checkpoint_page)
+    return stopped_pages
+
+
+def publish_stopped_translation(
+    job_id: str,
+    session_factory: SessionFactory,
+    temporary_result: Path | None,
+    result_path: Path,
+    result_filename: str,
+    translated_page_count: int,
+    failure_code: str | None,
+) -> str:
+    with session_factory() as session:
+        job = session.scalar(
+            select(TranslationJob)
+            .where(TranslationJob.id == job_id)
+            .with_for_update()
+        )
+        if job is None:
+            if temporary_result is not None:
+                temporary_result.unlink(missing_ok=True)
+            return "JOB_NOT_FOUND"
+        if job.status != JobStatus.TRANSLATION_STOPPING:
+            if temporary_result is not None:
+                temporary_result.unlink(missing_ok=True)
+            return job.status
+
+        has_result = False
+        if temporary_result is not None:
+            try:
+                result_path.parent.mkdir(parents=True, exist_ok=True)
+                temporary_result.replace(result_path)
+                has_result = True
+            except OSError:
+                logger.exception(
+                    json.dumps(
+                        {
+                            "event": "translation_stop_result_publish_failed",
+                            "jobId": job_id,
+                        }
+                    )
+                )
+                temporary_result.unlink(missing_ok=True)
+                failure_code = "PARTIAL_RESULT_BUILD_FAILED"
+        if not has_result:
+            try:
+                result_path.unlink(missing_ok=True)
+            except OSError:
+                logger.exception(
+                    json.dumps(
+                        {
+                            "event": "stale_translation_result_removal_failed",
+                            "jobId": job_id,
+                        }
+                    )
+                )
+
+        job.status = JobStatus.TRANSLATION_STOPPED
+        job.translated_page_count = translated_page_count
+        job.completed_at = None
+        job.result_filename = result_filename if has_result else None
+        job.failure_code = failure_code
+        job.translation_retry_attempt = 0
+        job.translation_next_retry_at = None
+        job.translation_wait_reason = None
+        job.translation_heartbeat_at = None
+        session.commit()
+        return JobStatus.TRANSLATION_STOPPED
+
+
+def finalize_stopped_translation(
+    job_id: str,
+    session_factory: SessionFactory,
+    settings: Settings,
+) -> str:
+    normalized_job_id = normalize_job_id(job_id)
+    if normalized_job_id is None:
+        return "INVALID_JOB_ID"
+
+    with session_factory() as session:
+        job = session.scalar(
+            select(TranslationJob)
+            .where(TranslationJob.id == normalized_job_id)
+            .with_for_update()
+        )
+        if job is None:
+            return "JOB_NOT_FOUND"
+        if job.status != JobStatus.TRANSLATION_STOPPING:
+            return job.status
+        requested_page_count = min(job.translated_page_count, job.page_count)
+        job.translation_heartbeat_at = utc_now()
+        session.commit()
+
+    checkpoint = resolve_checkpoint_directory(settings, normalized_job_id)
+    result_filename = f"{normalized_job_id}.pdf"
+    result_path = settings.storage_root / "results" / result_filename
+    temporary_result: Path | None = None
+    failure_code: str | None = None
+    stopped_pages: list[Path] = []
+    try:
+        stopped_pages = collect_stopped_checkpoint_pages(
+            settings,
+            normalized_job_id,
+            requested_page_count,
+        )
+        if len(stopped_pages) < requested_page_count:
+            failure_code = "PARTIAL_RESULT_BUILD_FAILED"
+        if stopped_pages:
+            checkpoint.mkdir(parents=True, exist_ok=True)
+            temporary_result = checkpoint / (
+                f"{normalized_job_id}.{uuid4().hex}.stopped.pdf"
+            )
+            temporary_result.unlink(missing_ok=True)
+            build_result_pdf(stopped_pages, temporary_result)
+    except (FileNotFoundError, ResultBuildError, OSError, ValueError):
+        failure_code = "PARTIAL_RESULT_BUILD_FAILED"
+        if temporary_result is not None:
+            temporary_result.unlink(missing_ok=True)
+            temporary_result = None
+        logger.exception(
+            json.dumps(
+                {
+                    "event": "translation_stop_result_build_failed",
+                    "jobId": normalized_job_id,
+                }
+            )
+        )
+
+    result = publish_stopped_translation(
+        normalized_job_id,
+        session_factory,
+        temporary_result,
+        result_path,
+        result_filename,
+        len(stopped_pages),
+        failure_code,
+    )
+    if result == JobStatus.TRANSLATION_STOPPED:
+        logger.info(
+            json.dumps(
+                {
+                    "event": "job_translation_stopped",
+                    "jobId": normalized_job_id,
+                    "translatedPageCount": len(stopped_pages),
+                    "resultAvailable": result_path.is_file(),
+                }
+            )
+        )
+    return result
+
+
+def settle_translation_interruption(
+    job_id: str,
+    session_factory: SessionFactory,
+    settings: Settings,
+) -> str:
+    current_status = get_translation_job_status(job_id, session_factory)
+    if current_status == JobStatus.TRANSLATION_STOPPING:
+        return finalize_stopped_translation(job_id, session_factory, settings)
+    return current_status
+
+
 def checkpoint_is_expired(
     checkpoint_updated_at: datetime | None,
     retention_days: int,
@@ -501,23 +731,30 @@ def translate_job(
 
     job = claim_translation_job(normalized_job_id, session_factory)
     if job is None:
-        with session_factory() as session:
-            existing = session.get(TranslationJob, normalized_job_id)
-            return existing.status if existing is not None else "JOB_NOT_FOUND"
+        return settle_translation_interruption(
+            normalized_job_id,
+            session_factory,
+            settings,
+        )
 
     checkpoint = resolve_checkpoint_directory(settings, normalized_job_id)
     result_filename = f"{normalized_job_id}.pdf"
     result_path = settings.storage_root / "results" / result_filename
+    temporary_result: Path | None = None
 
     failure_code = "TRANSLATION_FAILED"
     try:
+        if not clear_previous_translation_result(
+            normalized_job_id,
+            session_factory,
+            result_path,
+        ):
+            raise TranslationClaimLost
         preview_pages = resolve_preview_pages(
             settings,
             normalized_job_id,
             job.page_count,
         )
-        if result_path.exists():
-            raise ResultBuildError("Result PDF already exists.")
         if checkpoint_is_expired(
             job.checkpoint_updated_at,
             settings.translation_checkpoint_retention_days,
@@ -598,8 +835,14 @@ def translate_job(
         temporary_result = checkpoint / result_filename
         temporary_result.unlink(missing_ok=True)
         build_result_pdf(translated_pages, temporary_result)
-        result_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_result.replace(result_path)
+        if not publish_translation_result(
+            normalized_job_id,
+            session_factory,
+            temporary_result,
+            result_path,
+            result_filename,
+        ):
+            raise TranslationClaimLost
     except FileNotFoundError:
         failure_code = "PREVIEW_NOT_FOUND"
     except GeminiTranslationError as error:
@@ -618,8 +861,13 @@ def translate_job(
         else:
             failure_code = "AI_TRANSLATION_FAILED"
     except TranslationClaimLost:
-        result_path.unlink(missing_ok=True)
-        return get_translation_job_status(normalized_job_id, session_factory)
+        if temporary_result is not None:
+            temporary_result.unlink(missing_ok=True)
+        return settle_translation_interruption(
+            normalized_job_id,
+            session_factory,
+            settings,
+        )
     except ResultBuildError:
         failure_code = "RESULT_BUILD_FAILED"
     except Exception:
@@ -633,16 +881,6 @@ def translate_job(
             )
         )
     else:
-        if not mark_translation_completed(
-            normalized_job_id,
-            session_factory,
-            result_filename,
-        ):
-            result_path.unlink(missing_ok=True)
-            return get_translation_job_status(
-                normalized_job_id,
-                session_factory,
-            )
         rmtree(checkpoint, ignore_errors=True)
         logger.info(
             json.dumps(
@@ -654,13 +892,18 @@ def translate_job(
             )
         )
         return JobStatus.COMPLETED
-    result_path.unlink(missing_ok=True)
+    if temporary_result is not None:
+        temporary_result.unlink(missing_ok=True)
     if not mark_translation_failed(
         normalized_job_id,
         session_factory,
         failure_code,
     ):
-        return get_translation_job_status(normalized_job_id, session_factory)
+        return settle_translation_interruption(
+            normalized_job_id,
+            session_factory,
+            settings,
+        )
     logger.warning(
         json.dumps(
             {
@@ -715,5 +958,22 @@ def translate_job_task(job_id: str) -> str:
     return translate_job(job_id, SessionLocal, settings, translator)
 
 
+@celery_app.task(
+    name="meguyomi.finalize_translation_stop",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=30,
+    retry_kwargs={"max_retries": 3},
+)
+def finalize_translation_stop_task(job_id: str) -> str:
+    return finalize_stopped_translation(job_id, SessionLocal, get_settings())
+
+
 def dispatch_translation_job(job_id: str) -> None:
     translate_job_task.delay(job_id)
+
+
+def dispatch_translation_stop(job_id: str) -> None:
+    finalize_translation_stop_task.delay(job_id)
