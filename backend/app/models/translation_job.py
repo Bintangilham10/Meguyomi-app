@@ -81,7 +81,14 @@ class TranslationJob(Base):
 
     @property
     def result_available(self) -> bool:
-        return self.status == JobStatus.COMPLETED and bool(self.result_filename)
+        return self.status in {
+            JobStatus.COMPLETED,
+            JobStatus.TRANSLATION_STOPPED,
+        } and bool(self.result_filename)
+
+    @property
+    def can_resume_translation(self) -> bool:
+        return self.status == JobStatus.TRANSLATION_STOPPED
 
     @property
     def can_retry_translation(self) -> bool:
