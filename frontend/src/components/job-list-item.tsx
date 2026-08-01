@@ -3,15 +3,17 @@ import {
   getJobStatusPresentation,
   shouldShowTranslationProgress,
 } from "@/lib/job-status";
-import type { TranslationJob } from "@/types/job";
+import type { TranslationJob, TranslationJobStatus } from "@/types/job";
 
 
 interface JobListItemProps {
   job: TranslationJob;
   isDeleting: boolean;
   isStarting: boolean;
+  isStopping: boolean;
   onDelete: (job: TranslationJob) => void;
   onStartTranslation: (jobId: string) => void;
+  onStopTranslation: (jobId: string) => void;
   onRetryPreparation: (jobId: string) => void;
 }
 
@@ -31,12 +33,32 @@ function formatBytes(bytes: number): string {
 }
 
 
+function getProgressLabel(status: TranslationJobStatus): string {
+  if (
+    status === "FAILED" ||
+    status === "TRANSLATION_RETRY_WAIT" ||
+    status === "TRANSLATION_STOPPED"
+  ) {
+    return "Checkpoint tersimpan";
+  }
+  if (status === "TRANSLATION_STOPPING") {
+    return "Checkpoint terakhir";
+  }
+  if (status === "TRANSLATION_QUEUED") {
+    return "Akan dilanjutkan";
+  }
+  return "Progres terjemahan";
+}
+
+
 export function JobListItem({
   job,
   isDeleting,
   isStarting,
+  isStopping,
   onDelete,
   onStartTranslation,
+  onStopTranslation,
   onRetryPreparation,
 }: JobListItemProps) {
   const presentation = getJobStatusPresentation(
@@ -45,7 +67,13 @@ export function JobListItem({
     job.translationWaitReason,
   );
   const canStartTranslation =
-    job.status === "READY_FOR_TRANSLATION" || job.canRetryTranslation;
+    job.status === "READY_FOR_TRANSLATION" ||
+    job.canRetryTranslation ||
+    job.canResumeTranslation;
+  const canStopTranslation =
+    job.status === "TRANSLATION_QUEUED" ||
+    job.status === "TRANSLATING" ||
+    job.status === "TRANSLATION_RETRY_WAIT";
   const statusClass =
     presentation.tone === "danger"
       ? "bg-[var(--accent-wash)] text-[var(--danger)]"
@@ -66,13 +94,7 @@ export function JobListItem({
           <div className="mt-4 max-w-md">
             <div className="flex justify-between gap-4 text-xs text-[var(--muted)]">
               <span>
-                {job.status === "FAILED"
-                  ? "Checkpoint tersimpan"
-                  : job.status === "TRANSLATION_RETRY_WAIT"
-                    ? "Checkpoint tersimpan"
-                  : job.status === "TRANSLATION_QUEUED"
-                    ? "Akan dilanjutkan"
-                    : "Progres terjemahan"}
+                {getProgressLabel(job.status)}
               </span>
               <span>
                 {job.translatedPageCount}/{job.pageCount} halaman
@@ -95,9 +117,17 @@ export function JobListItem({
           <span className="sr-only">: {presentation.detail}</span>
         </p>
         {job.status === "FAILED" ||
-        job.status === "TRANSLATION_RETRY_WAIT" ? (
+        job.status === "TRANSLATION_RETRY_WAIT" ||
+        job.status === "TRANSLATION_STOPPING" ||
+        job.status === "TRANSLATION_STOPPED" ? (
           <p className="max-w-sm text-left text-xs leading-5 text-[var(--muted)] lg:text-right">
-            {presentation.detail}
+            {job.status === "TRANSLATION_STOPPED"
+              ? job.resultAvailable
+                ? "PDF parsial siap diunduh atau dicetak. Terjemahan dapat dilanjutkan dari checkpoint ini."
+                : job.translatedPageCount > 0
+                  ? "PDF parsial belum dapat disusun, tetapi checkpoint tetap aman dan dapat dilanjutkan."
+                  : "Belum ada halaman selesai untuk PDF. Terjemahan dapat dilanjutkan dari checkpoint ini."
+              : presentation.detail}
             {job.status === "TRANSLATION_RETRY_WAIT" &&
             job.translationNextRetryAt ? (
               <>
@@ -112,39 +142,66 @@ export function JobListItem({
           {canStartTranslation ? (
             <button
               type="button"
-              disabled={isStarting || isDeleting}
+              disabled={isStarting || isStopping || isDeleting}
               onClick={() => onStartTranslation(job.id)}
               className="rounded-[10px] border border-[var(--ink)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-bold transition hover:bg-[var(--ink)] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isStarting
                 ? "Mengantrekan..."
-                : job.canRetryTranslation
-                  ? "Coba terjemahkan lagi"
-                  : "Mulai terjemahan"}
+                : job.canResumeTranslation
+                  ? "Lanjutkan terjemahan"
+                  : job.canRetryTranslation
+                    ? "Coba terjemahkan lagi"
+                    : "Mulai terjemahan"}
+            </button>
+          ) : null}
+          {canStopTranslation ? (
+            <button
+              type="button"
+              disabled={isStopping || isStarting || isDeleting}
+              onClick={() => onStopTranslation(job.id)}
+              className="rounded-[10px] border border-[var(--danger)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-bold text-[var(--danger)] transition hover:bg-[var(--accent-wash)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--danger)] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isStopping ? "Menghentikan..." : "Stop terjemahan"}
             </button>
           ) : null}
           {job.canRetryPreparation ? (
             <button
               type="button"
-              disabled={isStarting || isDeleting}
+              disabled={isStarting || isStopping || isDeleting}
               onClick={() => onRetryPreparation(job.id)}
               className="rounded-[10px] border border-[var(--ink)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-bold transition hover:bg-[var(--ink)] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isStarting ? "Mengantrekan..." : "Coba siapkan lagi"}
             </button>
           ) : null}
-          {job.status === "COMPLETED" && job.resultAvailable ? (
-            <a
-              href={`/api/jobs/${job.id}/result`}
-              className="rounded-[10px] border border-[var(--ink)] bg-[var(--accent)] px-3 py-2 text-xs font-bold text-white transition hover:bg-[var(--accent-strong)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] active:translate-y-px"
-            >
-              Unduh PDF
-            </a>
+          {job.resultAvailable ? (
+            <>
+              <a
+                href={`/api/jobs/${job.id}/result`}
+                className="rounded-[10px] border border-[var(--ink)] bg-[var(--accent)] px-3 py-2 text-xs font-bold text-white transition hover:bg-[var(--accent-strong)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] active:translate-y-px"
+              >
+                {job.status === "TRANSLATION_STOPPED"
+                  ? "Unduh PDF parsial"
+                  : "Unduh PDF"}
+              </a>
+              <a
+                href={`/api/jobs/${job.id}/result?mode=print`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Buka PDF di tab baru untuk dicetak"
+                className="rounded-[10px] border border-[var(--ink)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-bold transition hover:bg-[var(--ink)] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+              >
+                {job.status === "TRANSLATION_STOPPED"
+                  ? "Cetak PDF parsial"
+                  : "Cetak PDF"}
+              </a>
+            </>
           ) : null}
           {canDeleteJob(job.status) ? (
             <button
               type="button"
-              disabled={isDeleting || isStarting}
+              disabled={isDeleting || isStarting || isStopping}
               onClick={() => onDelete(job)}
               className="rounded-[10px] px-3 py-2 text-xs font-bold text-[var(--danger)] transition hover:bg-[var(--accent-wash)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--danger)] disabled:cursor-not-allowed disabled:opacity-60"
             >
