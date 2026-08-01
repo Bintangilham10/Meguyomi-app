@@ -15,8 +15,12 @@ from app.models.job_status import JobStatus
 from app.models.translation_job import TranslationJob
 from app.tasks.celery_app import celery_app
 from app.tasks.preparation import normalize_job_id
-from app.tasks.translation import checkpoint_is_expired, resolve_checkpoint_directory
-from app.tasks.translation import dispatch_translation_job
+from app.tasks.translation import (
+    checkpoint_is_expired,
+    dispatch_translation_job,
+    dispatch_translation_stop,
+    resolve_checkpoint_directory,
+)
 
 
 SessionFactory = Callable[[], Session]
@@ -157,6 +161,7 @@ def recover_translation_jobs(
     settings: Settings,
     *,
     dispatch: Dispatcher = dispatch_translation_job,
+    dispatch_stop: Dispatcher = dispatch_translation_stop,
     now: datetime | None = None,
     jitter: RetryJitter = random.uniform,
 ) -> dict[str, int]:
@@ -172,6 +177,8 @@ def recover_translation_jobs(
         "recovered": 0,
         "dispatched": 0,
         "dispatchFailed": 0,
+        "stopDispatched": 0,
+        "stopDispatchFailed": 0,
     }
 
     with session_factory() as session:
@@ -191,6 +198,52 @@ def recover_translation_jobs(
             job.failure_code = "PREPARATION_FAILED"
             counts["preparationRecovered"] += 1
         session.commit()
+
+    with session_factory() as session:
+        stale_stopping_jobs = session.scalars(
+            select(TranslationJob)
+            .where(
+                TranslationJob.status == JobStatus.TRANSLATION_STOPPING,
+                or_(
+                    TranslationJob.translation_heartbeat_at.is_(None),
+                    TranslationJob.translation_heartbeat_at <= stale_before,
+                ),
+            )
+            .order_by(TranslationJob.translation_heartbeat_at.asc())
+            .limit(100)
+            .with_for_update(skip_locked=True)
+        ).all()
+        stale_stopping_job_ids = [job.id for job in stale_stopping_jobs]
+        for job in stale_stopping_jobs:
+            job.translation_heartbeat_at = reference_time
+        session.commit()
+
+    for job_id in stale_stopping_job_ids:
+        try:
+            dispatch_stop(job_id)
+        except Exception:
+            logger.exception(
+                json.dumps(
+                    {
+                        "event": "translation_stop_recovery_dispatch_failed",
+                        "jobId": job_id,
+                    }
+                )
+            )
+            with session_factory() as session:
+                result = session.execute(
+                    update(TranslationJob)
+                    .where(
+                        TranslationJob.id == job_id,
+                        TranslationJob.status == JobStatus.TRANSLATION_STOPPING,
+                    )
+                    .values(translation_heartbeat_at=None)
+                )
+                session.commit()
+                if result.rowcount == 1:
+                    counts["stopDispatchFailed"] += 1
+            continue
+        counts["stopDispatched"] += 1
 
     with session_factory() as session:
         stale_jobs = session.scalars(
@@ -285,6 +338,8 @@ def recover_translation_jobs(
                 "recoveredJobs": counts["recovered"],
                 "dispatchedJobs": counts["dispatched"],
                 "dispatchFailedJobs": counts["dispatchFailed"],
+                "stopDispatchedJobs": counts["stopDispatched"],
+                "stopDispatchFailedJobs": counts["stopDispatchFailed"],
             }
         )
     )
