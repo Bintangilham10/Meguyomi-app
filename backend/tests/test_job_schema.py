@@ -15,6 +15,8 @@ from app.schemas.job import JobResponse
         "TRANSLATION_QUEUED",
         "TRANSLATING",
         "TRANSLATION_RETRY_WAIT",
+        "TRANSLATION_STOPPING",
+        "TRANSLATION_STOPPED",
         "COMPLETED",
         "FAILED",
     ],
@@ -48,12 +50,16 @@ def test_job_response_supports_translation_lifecycle(job_status: str) -> None:
             "completed_at": None,
             "failure_code": None,
             "result_available": job_status == "COMPLETED",
+            "can_resume_translation": job_status == "TRANSLATION_STOPPED",
         }
     )
 
     assert response.status == job_status
     assert response.translated_page_count == 3
     assert response.result_available is (job_status == "COMPLETED")
+    assert response.can_resume_translation is (
+        job_status == "TRANSLATION_STOPPED"
+    )
     if job_status == "TRANSLATION_RETRY_WAIT":
         assert response.translation_next_retry_at is not None
         assert response.translation_next_retry_at.tzinfo == timezone.utc
