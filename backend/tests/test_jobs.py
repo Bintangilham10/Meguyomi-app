@@ -542,6 +542,206 @@ def test_retry_wait_response_uses_utc_timestamp_and_wait_reason(
     ].endswith("+00:00")
 
 
+def test_stop_translation_claims_active_job_and_redispatches_duplicate(
+    authenticated_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("chapter.pdf", make_pdf(page_count=3), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    update_job(
+        job_id,
+        status=JobStatus.TRANSLATING,
+        prepared_at=datetime.now(timezone.utc),
+        translated_page_count=1,
+        translation_heartbeat_at=datetime.now(timezone.utc),
+    )
+    dispatched_job_ids: list[str] = []
+    monkeypatch.setattr(
+        "app.api.jobs.dispatch_translation_stop",
+        dispatched_job_ids.append,
+        raising=False,
+    )
+
+    response = authenticated_client.post(f"/jobs/{job_id}/translation/stop")
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "TRANSLATION_STOPPING"
+    assert response.json()["translatedPageCount"] == 1
+    assert response.json()["translationNextRetryAt"] is None
+    assert dispatched_job_ids == [job_id]
+
+    duplicate_response = authenticated_client.post(
+        f"/jobs/{job_id}/translation/stop"
+    )
+    assert duplicate_response.status_code == 202
+    assert dispatched_job_ids == [job_id, job_id]
+
+
+def test_stop_translation_restores_retry_wait_when_queue_is_unavailable(
+    authenticated_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("chapter.pdf", make_pdf(page_count=3), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    next_retry_at = datetime(2026, 8, 2, 12, 30, tzinfo=timezone.utc)
+    update_job(
+        job_id,
+        status=JobStatus.TRANSLATION_RETRY_WAIT,
+        prepared_at=datetime.now(timezone.utc),
+        translated_page_count=1,
+        translation_retry_attempt=2,
+        translation_next_retry_at=next_retry_at,
+        translation_wait_reason="service_unavailable",
+    )
+
+    def fail_dispatch(_job_id: str) -> None:
+        raise RuntimeError("queue unavailable")
+
+    monkeypatch.setattr(
+        "app.api.jobs.dispatch_translation_stop",
+        fail_dispatch,
+        raising=False,
+    )
+
+    response = authenticated_client.post(f"/jobs/{job_id}/translation/stop")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "QUEUE_UNAVAILABLE"
+    job = authenticated_client.get("/jobs").json()["data"][0]
+    assert job["status"] == "TRANSLATION_RETRY_WAIT"
+    assert job["translationRetryAttempt"] == 2
+    assert job["translationWaitReason"] == "service_unavailable"
+    assert datetime.fromisoformat(job["translationNextRetryAt"]) == next_retry_at
+
+
+def test_stop_translation_keeps_active_worker_stop_durable_on_dispatch_failure(
+    authenticated_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("chapter.pdf", make_pdf(page_count=3), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    update_job(
+        job_id,
+        status=JobStatus.TRANSLATING,
+        prepared_at=datetime.now(timezone.utc),
+        translated_page_count=1,
+        translation_heartbeat_at=datetime.now(timezone.utc),
+    )
+
+    def fail_dispatch(_job_id: str) -> None:
+        raise RuntimeError("queue unavailable")
+
+    monkeypatch.setattr(
+        "app.api.jobs.dispatch_translation_stop",
+        fail_dispatch,
+        raising=False,
+    )
+
+    response = authenticated_client.post(f"/jobs/{job_id}/translation/stop")
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "TRANSLATION_STOPPING"
+    job = authenticated_client.get("/jobs").json()["data"][0]
+    assert job["status"] == "TRANSLATION_STOPPING"
+
+
+def test_start_translation_resumes_stopped_checkpoint(
+    authenticated_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("chapter.pdf", make_pdf(page_count=3), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    result_filename = f"{job_id}.pdf"
+    results = tmp_path / "results"
+    results.mkdir(parents=True)
+    (results / result_filename).write_bytes(make_pdf())
+    update_job(
+        job_id,
+        status=JobStatus.TRANSLATION_STOPPED,
+        prepared_at=datetime.now(timezone.utc),
+        translated_page_count=1,
+        result_filename=result_filename,
+    )
+    dispatched_job_ids: list[str] = []
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        "app.api.jobs.dispatch_translation_job",
+        dispatched_job_ids.append,
+        raising=False,
+    )
+
+    response = authenticated_client.post(f"/jobs/{job_id}/translation")
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "TRANSLATION_QUEUED"
+    assert response.json()["translatedPageCount"] == 1
+    assert response.json()["resultAvailable"] is False
+    assert response.json()["canResumeTranslation"] is False
+    assert dispatched_job_ids == [job_id]
+    get_settings.cache_clear()
+
+
+def test_resume_stopped_job_preserves_partial_when_queue_is_unavailable(
+    authenticated_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("chapter.pdf", make_pdf(page_count=3), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    result_filename = f"{job_id}.pdf"
+    result_path = tmp_path / "results" / result_filename
+    result_path.parent.mkdir(parents=True)
+    result_bytes = make_pdf()
+    result_path.write_bytes(result_bytes)
+    update_job(
+        job_id,
+        status=JobStatus.TRANSLATION_STOPPED,
+        prepared_at=datetime.now(timezone.utc),
+        translated_page_count=1,
+        result_filename=result_filename,
+    )
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    get_settings.cache_clear()
+
+    def fail_dispatch(_job_id: str) -> None:
+        raise RuntimeError("queue unavailable")
+
+    monkeypatch.setattr(
+        "app.api.jobs.dispatch_translation_job",
+        fail_dispatch,
+        raising=False,
+    )
+
+    response = authenticated_client.post(f"/jobs/{job_id}/translation")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "QUEUE_UNAVAILABLE"
+    assert result_path.read_bytes() == result_bytes
+    listed_job = authenticated_client.get("/jobs").json()["data"][0]
+    assert listed_job["status"] == "TRANSLATION_STOPPED"
+    assert listed_job["resultAvailable"] is True
+    assert listed_job["canResumeTranslation"] is True
+    assert authenticated_client.get(f"/jobs/{job_id}/result").status_code == 200
+    get_settings.cache_clear()
+
+
 def test_download_returns_completed_job_result(
     authenticated_client: TestClient,
     tmp_path: Path,
@@ -569,6 +769,39 @@ def test_download_returns_completed_job_result(
     assert response.headers["content-type"] == "application/pdf"
     assert "chapter-indonesia.pdf" in response.headers["content-disposition"]
     assert response.headers["cache-control"] == "private, no-store"
+
+
+def test_download_returns_stopped_partial_result_inline(
+    authenticated_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    upload_response = authenticated_client.post(
+        "/jobs",
+        files={"file": ("chapter.pdf", make_pdf(), "application/pdf")},
+    )
+    job_id = upload_response.json()["id"]
+    result_filename = f"{job_id}.pdf"
+    results = tmp_path / "results"
+    results.mkdir(parents=True)
+    result_bytes = make_pdf()
+    (results / result_filename).write_bytes(result_bytes)
+    update_job(
+        job_id,
+        status=JobStatus.TRANSLATION_STOPPED,
+        translated_page_count=1,
+        result_filename=result_filename,
+    )
+
+    response = authenticated_client.get(
+        f"/jobs/{job_id}/result?disposition=inline"
+    )
+
+    assert response.status_code == 200
+    assert response.content == result_bytes
+    assert response.headers["content-disposition"].startswith("inline;")
+    listed_job = authenticated_client.get("/jobs").json()["data"][0]
+    assert listed_job["resultAvailable"] is True
+    assert listed_job["canResumeTranslation"] is True
 
 
 def test_delete_terminal_job_removes_record_and_all_artifacts(
