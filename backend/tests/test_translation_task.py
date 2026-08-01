@@ -131,6 +131,132 @@ def test_translate_job_builds_pdf_and_marks_job_completed(tmp_path: Path) -> Non
     engine.dispose()
 
 
+def test_translate_job_stop_builds_partial_pdf_and_keeps_checkpoint(
+    tmp_path: Path,
+) -> None:
+    engine, session_factory = make_session_factory()
+    settings = Settings(storage_root=tmp_path)
+    job_id = add_translation_job(session_factory, tmp_path, page_count=3)
+
+    class StopOnSecondPageTranslator(FakeTranslator):
+        def translate_page(self, page_path: Path) -> PageTranslation:
+            translation = super().translate_page(page_path)
+            if page_path.name == "page-0002.png":
+                with session_factory() as session:
+                    job = session.get(TranslationJob, job_id)
+                    assert job is not None
+                    job.status = JobStatus.TRANSLATION_STOPPING
+                    job.translation_heartbeat_at = None
+                    session.commit()
+            return translation
+
+    translator = StopOnSecondPageTranslator()
+
+    result = translate_job(job_id, session_factory, settings, translator)
+
+    assert result == JobStatus.TRANSLATION_STOPPED
+    assert translator.pages == ["page-0001.png", "page-0002.png"]
+    result_pdf = tmp_path / "results" / f"{job_id}.pdf"
+    assert result_pdf.is_file()
+    assert len(PdfReader(result_pdf).pages) == 1
+    checkpoint = tmp_path / "temporary" / f"{job_id}.translation"
+    assert checkpoint.is_dir()
+    with session_factory() as session:
+        job = session.get(TranslationJob, job_id)
+        assert job is not None
+        assert job.status == JobStatus.TRANSLATION_STOPPED
+        assert job.translated_page_count == 1
+        assert job.result_filename == f"{job_id}.pdf"
+        assert job.result_available
+        assert job.can_resume_translation
+
+        job.status = JobStatus.TRANSLATION_QUEUED
+        job.result_filename = None
+        session.commit()
+
+    resume_translator = FakeTranslator()
+    resumed_result = translate_job(
+        job_id,
+        session_factory,
+        settings,
+        resume_translator,
+    )
+
+    assert resumed_result == JobStatus.COMPLETED
+    assert resume_translator.pages == ["page-0003.png"]
+    assert len(PdfReader(result_pdf).pages) == 3
+    assert not checkpoint.exists()
+    engine.dispose()
+
+
+def test_stop_does_not_publish_stale_partial_when_current_build_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine, session_factory = make_session_factory()
+    settings = Settings(storage_root=tmp_path)
+    job_id = add_translation_job(session_factory, tmp_path, page_count=2)
+    checkpoint = tmp_path / "temporary" / f"{job_id}.translation"
+    checkpoint_pages = checkpoint / "pages"
+    checkpoint_pages.mkdir(parents=True)
+    (checkpoint / ".render-version").write_text(
+        translation_module.TRANSLATION_RENDER_VERSION,
+        encoding="ascii",
+    )
+    records = tmp_path / "translations" / job_id
+    records.mkdir(parents=True)
+    for page_number in range(1, 3):
+        Image.new("RGB", (120, 160), "white").save(
+            checkpoint_pages / f"page-{page_number:04d}.png",
+            format="PNG",
+        )
+        (records / f"page-{page_number:04d}.json").write_text(
+            '{"regions": []}',
+            encoding="utf-8",
+        )
+    result_path = tmp_path / "results" / f"{job_id}.pdf"
+    result_path.parent.mkdir(parents=True)
+    translation_module.build_result_pdf(
+        [checkpoint_pages / "page-0001.png"],
+        result_path,
+    )
+    with session_factory() as session:
+        job = session.get(TranslationJob, job_id)
+        assert job is not None
+        job.status = JobStatus.TRANSLATION_STOPPING
+        job.translated_page_count = 2
+        job.translation_heartbeat_at = datetime.now(timezone.utc)
+        session.commit()
+
+    def fail_partial_build(_pages, _destination) -> None:
+        raise ResultBuildError("forced partial build failure")
+
+    monkeypatch.setattr(
+        translation_module,
+        "build_result_pdf",
+        fail_partial_build,
+    )
+
+    result = translation_module.finalize_stopped_translation(
+        job_id,
+        session_factory,
+        settings,
+    )
+
+    assert result == JobStatus.TRANSLATION_STOPPED
+    assert not result_path.exists()
+    with session_factory() as session:
+        job = session.get(TranslationJob, job_id)
+        assert job is not None
+        assert job.status == JobStatus.TRANSLATION_STOPPED
+        assert job.translated_page_count == 2
+        assert job.result_filename is None
+        assert job.failure_code == "PARTIAL_RESULT_BUILD_FAILED"
+        assert not job.result_available
+        assert job.can_resume_translation
+    engine.dispose()
+
+
 def test_translate_job_marks_missing_preview_as_failed(tmp_path: Path) -> None:
     engine, session_factory = make_session_factory()
     settings = Settings(storage_root=tmp_path)
