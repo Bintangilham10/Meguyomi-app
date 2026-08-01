@@ -1,12 +1,13 @@
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -23,7 +24,7 @@ from app.schemas.job import JobListResponse, JobResponse, PaginationResponse
 from app.services.job_artifacts import JobArtifactRemovalError, remove_job_artifacts
 from app.services.pdf_upload import UploadValidationError, validate_and_store_pdf
 from app.tasks.preparation import dispatch_preparation_job
-from app.tasks.translation import dispatch_translation_job
+from app.tasks.translation import dispatch_translation_job, dispatch_translation_stop
 
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -33,8 +34,16 @@ DELETABLE_JOB_STATUSES = frozenset(
     {
         JobStatus.READY_FOR_TRANSLATION,
         JobStatus.TRANSLATION_RETRY_WAIT,
+        JobStatus.TRANSLATION_STOPPED,
         JobStatus.COMPLETED,
         JobStatus.FAILED,
+    }
+)
+STOPPABLE_TRANSLATION_STATUSES = frozenset(
+    {
+        JobStatus.TRANSLATION_QUEUED,
+        JobStatus.TRANSLATING,
+        JobStatus.TRANSLATION_RETRY_WAIT,
     }
 )
 
@@ -293,58 +302,51 @@ def start_translation(
         )
 
     normalized_job_id = str(job_id)
-    claimed = db.execute(
-        update(TranslationJob)
+    job = db.scalar(
+        select(TranslationJob)
         .where(
             TranslationJob.id == normalized_job_id,
             TranslationJob.owner_username == username,
-            or_(
-                TranslationJob.status == JobStatus.READY_FOR_TRANSLATION,
-                and_(
-                    TranslationJob.status == JobStatus.FAILED,
-                    TranslationJob.prepared_at.is_not(None),
-                    TranslationJob.failure_code.in_(
-                        RETRYABLE_TRANSLATION_FAILURE_CODES
-                    ),
-                ),
-            ),
         )
-        .values(
-            status=JobStatus.TRANSLATION_QUEUED,
-            translation_started_at=None,
-            completed_at=None,
-            result_filename=None,
-            failure_code=None,
-            translation_retry_attempt=0,
-            translation_next_retry_at=None,
-            translation_wait_reason=None,
-            translation_heartbeat_at=None,
+        .with_for_update()
+    )
+    if job is None:
+        return api_error(
+            status.HTTP_404_NOT_FOUND,
+            "JOB_NOT_FOUND",
+            JOB_NOT_FOUND_MESSAGE,
+        )
+    can_start = (
+        job.status == JobStatus.READY_FOR_TRANSLATION
+        or job.status == JobStatus.TRANSLATION_STOPPED
+        or (
+            job.status == JobStatus.FAILED
+            and job.prepared_at is not None
+            and job.failure_code in RETRYABLE_TRANSLATION_FAILURE_CODES
         )
     )
-    if claimed.rowcount != 1:
-        db.rollback()
-        existing = db.scalar(
-            select(TranslationJob).where(
-                TranslationJob.id == normalized_job_id,
-                TranslationJob.owner_username == username,
-            )
-        )
-        if existing is None:
-            return api_error(
-                status.HTTP_404_NOT_FOUND,
-                "JOB_NOT_FOUND",
-                JOB_NOT_FOUND_MESSAGE,
-            )
+    if not can_start:
         return api_error(
             status.HTTP_409_CONFLICT,
             "JOB_NOT_READY",
             "Pekerjaan belum siap atau kegagalannya tidak dapat dicoba ulang.",
         )
 
+    was_stopped = job.status == JobStatus.TRANSLATION_STOPPED
+    previous_result_filename = job.result_filename
+    previous_failure_code = job.failure_code
+    previous_translation_started_at = job.translation_started_at
+    job.status = JobStatus.TRANSLATION_QUEUED
+    job.translation_started_at = None
+    job.completed_at = None
+    job.result_filename = None
+    job.failure_code = None
+    job.translation_retry_attempt = 0
+    job.translation_next_retry_at = None
+    job.translation_wait_reason = None
+    job.translation_heartbeat_at = None
     db.commit()
-    job = db.get(TranslationJob, normalized_job_id)
-    if job is None:
-        raise RuntimeError("Claimed translation job could not be loaded.")
+    db.refresh(job)
 
     try:
         dispatch_translation_job(job.id)
@@ -358,10 +360,166 @@ def start_translation(
                 }
             )
         )
-        job.status = JobStatus.FAILED
-        job.failure_code = "QUEUE_UNAVAILABLE"
+        if was_stopped:
+            restored = db.execute(
+                update(TranslationJob)
+                .where(
+                    TranslationJob.id == normalized_job_id,
+                    TranslationJob.status == JobStatus.TRANSLATION_QUEUED,
+                )
+                .values(
+                    status=JobStatus.TRANSLATION_STOPPED,
+                    result_filename=previous_result_filename,
+                    failure_code=previous_failure_code,
+                    translation_started_at=previous_translation_started_at,
+                )
+                .execution_options(synchronize_session=False)
+            )
+        else:
+            restored = db.execute(
+                update(TranslationJob)
+                .where(
+                    TranslationJob.id == normalized_job_id,
+                    TranslationJob.status == JobStatus.TRANSLATION_QUEUED,
+                )
+                .values(
+                    status=JobStatus.FAILED,
+                    failure_code="QUEUE_UNAVAILABLE",
+                )
+                .execution_options(synchronize_session=False)
+            )
         db.commit()
-        db.refresh(job)
+        db.expire_all()
+        current_job = db.get(TranslationJob, normalized_job_id)
+        if current_job is None:
+            raise RuntimeError("Dispatched translation job could not be loaded.")
+        if was_stopped and restored.rowcount == 1:
+            return api_error(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "QUEUE_UNAVAILABLE",
+                "Terjemahan belum dapat dilanjutkan karena antrean tidak tersedia.",
+            )
+        return JobResponse.model_validate(current_job)
+
+    return JobResponse.model_validate(job)
+
+
+@router.post(
+    "/{job_id}/translation/stop",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=JobResponse,
+)
+def stop_translation(
+    job_id: UUID,
+    username: AuthenticatedUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> JobResponse | JSONResponse:
+    normalized_job_id = str(job_id)
+    job = db.scalar(
+        select(TranslationJob)
+        .where(
+            TranslationJob.id == normalized_job_id,
+            TranslationJob.owner_username == username,
+        )
+        .with_for_update()
+    )
+    if job is None:
+        return api_error(
+            status.HTTP_404_NOT_FOUND,
+            "JOB_NOT_FOUND",
+            JOB_NOT_FOUND_MESSAGE,
+        )
+    if job.status == JobStatus.TRANSLATION_STOPPING:
+        db.commit()
+        try:
+            dispatch_translation_stop(job.id)
+        except Exception:
+            logger.exception(
+                json.dumps(
+                    {
+                        "event": "translation_stop_redispatch_failed",
+                        "jobId": job.id,
+                    }
+                )
+            )
+        return JobResponse.model_validate(job)
+    if job.status not in STOPPABLE_TRANSLATION_STATUSES:
+        return api_error(
+            status.HTTP_409_CONFLICT,
+            "JOB_NOT_TRANSLATING",
+            "Tidak ada proses terjemahan aktif yang dapat dihentikan.",
+        )
+
+    previous_status = job.status
+    previous_retry_attempt = job.translation_retry_attempt
+    previous_next_retry_at = job.translation_next_retry_at
+    previous_wait_reason = job.translation_wait_reason
+    previous_heartbeat_at = job.translation_heartbeat_at
+    previous_failure_code = job.failure_code
+    previous_completed_at = job.completed_at
+    previous_result_filename = job.result_filename
+    job.status = JobStatus.TRANSLATION_STOPPING
+    job.completed_at = None
+    job.result_filename = None
+    job.failure_code = None
+    job.translation_next_retry_at = None
+    job.translation_wait_reason = None
+    job.translation_heartbeat_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(job)
+
+    try:
+        dispatch_translation_stop(job.id)
+    except Exception:
+        logger.exception(
+            json.dumps(
+                {
+                    "event": "translation_stop_dispatch_failed",
+                    "jobId": job.id,
+                    "failureCode": "QUEUE_UNAVAILABLE",
+                }
+            )
+        )
+        if previous_status == JobStatus.TRANSLATING:
+            # The active worker can observe STOPPING even when publishing the
+            # dedicated finalizer task failed. Keep the stop request durable;
+            # maintenance will redispatch it if the worker does not finish it.
+            db.expire_all()
+            current_job = db.get(TranslationJob, normalized_job_id)
+            if current_job is None:
+                raise RuntimeError("Stopping translation job could not be loaded.")
+            return JobResponse.model_validate(current_job)
+
+        restored = db.execute(
+            update(TranslationJob)
+            .where(
+                TranslationJob.id == normalized_job_id,
+                TranslationJob.status == JobStatus.TRANSLATION_STOPPING,
+            )
+            .values(
+                status=previous_status,
+                translation_retry_attempt=previous_retry_attempt,
+                translation_next_retry_at=previous_next_retry_at,
+                translation_wait_reason=previous_wait_reason,
+                translation_heartbeat_at=previous_heartbeat_at,
+                failure_code=previous_failure_code,
+                completed_at=previous_completed_at,
+                result_filename=previous_result_filename,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        db.commit()
+        if restored.rowcount == 1:
+            return api_error(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "QUEUE_UNAVAILABLE",
+                "Permintaan berhenti belum dapat dikirim ke worker.",
+            )
+        db.expire_all()
+        current_job = db.get(TranslationJob, normalized_job_id)
+        if current_job is None:
+            raise RuntimeError("Stopping translation job could not be loaded.")
+        return JobResponse.model_validate(current_job)
 
     return JobResponse.model_validate(job)
 
@@ -371,6 +529,10 @@ def download_result(
     job_id: UUID,
     username: AuthenticatedUser,
     db: Annotated[Session, Depends(get_db)],
+    disposition: Annotated[
+        Literal["attachment", "inline"],
+        Query(),
+    ] = "attachment",
 ) -> FileResponse | JSONResponse:
     job = db.scalar(
         select(TranslationJob).where(
@@ -384,7 +546,10 @@ def download_result(
             "JOB_NOT_FOUND",
             JOB_NOT_FOUND_MESSAGE,
         )
-    if job.status != JobStatus.COMPLETED or not job.result_filename:
+    if job.status not in {
+        JobStatus.COMPLETED,
+        JobStatus.TRANSLATION_STOPPED,
+    } or not job.result_filename:
         return api_error(
             status.HTTP_409_CONFLICT,
             "RESULT_NOT_READY",
@@ -422,5 +587,6 @@ def download_result(
         result_path,
         media_type="application/pdf",
         filename=f"{original_stem}-indonesia.pdf",
+        content_disposition_type=disposition,
         headers={"Cache-Control": "private, no-store"},
     )
