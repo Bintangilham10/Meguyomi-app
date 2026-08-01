@@ -181,7 +181,9 @@ def test_gemini_translator_sends_bounded_structured_request(tmp_path: Path) -> N
         "image/png"
     )
     prompt = payload["contents"][0]["parts"][1]["text"]
-    assert "detect every visible Japanese string" in prompt
+    assert "detect every visible source-language string" in prompt
+    assert "Simplified or Traditional Chinese" in prompt
+    assert "Chinese for dialogue and Japanese for sound effects" in prompt
     assert "all sound effects or onomatopoeia" in prompt
     assert "glyph, outline, shadow, and punctuation mark" in prompt
     assert "same speech balloon into one dialogue region" in prompt
@@ -193,6 +195,8 @@ def test_gemini_translator_sends_bounded_structured_request(tmp_path: Path) -> N
     assert "Proofread Indonesian spelling" in prompt
     assert "Never leave Japanese or other CJK characters" in prompt
     assert "do not wrap sound effects in asterisks" in prompt
+    assert "inventory every speech balloon and caption box" in prompt
+    assert "never return only sound effects" in prompt
     assert captured["timeout"] == 30
     assert captured["max_response_bytes"] == 100_000
 
