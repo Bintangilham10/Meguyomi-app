@@ -20,6 +20,7 @@ interface JobListProps {
 export function JobList({ jobs, pagination, error }: JobListProps) {
   const router = useRouter();
   const [startingJobId, setStartingJobId] = useState<string | null>(null);
+  const [stoppingJobId, setStoppingJobId] = useState<string | null>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const hasActiveJobs = jobs.some((job) => shouldRefreshJobStatus(job.status));
@@ -53,6 +54,37 @@ export function JobList({ jobs, pagination, error }: JobListProps) {
       setActionError("Layanan terjemahan AI sedang tidak tersedia.");
     } finally {
       setStartingJobId(null);
+    }
+  }
+
+  async function stopTranslation(jobId: string) {
+    setStoppingJobId(jobId);
+    setActionError(null);
+    try {
+      const response = await fetch(`/api/jobs/${jobId}/translation/stop`, {
+        method: "POST",
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        setActionError(
+          parseApiErrorMessage(body, "Terjemahan belum dapat dihentikan."),
+        );
+        return;
+      }
+      const job = parseJobResponse(body);
+      if (
+        !job ||
+        (job.status !== "TRANSLATION_STOPPING" &&
+          job.status !== "TRANSLATION_STOPPED")
+      ) {
+        setActionError("Respons penghentian terjemahan tidak valid.");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setActionError("Layanan penghentian terjemahan sedang tidak tersedia.");
+    } finally {
+      setStoppingJobId(null);
     }
   }
 
@@ -162,8 +194,10 @@ export function JobList({ jobs, pagination, error }: JobListProps) {
             job={job}
             isDeleting={deletingJobId === job.id}
             isStarting={startingJobId === job.id}
+            isStopping={stoppingJobId === job.id}
             onDelete={deleteJob}
             onStartTranslation={startTranslation}
+            onStopTranslation={stopTranslation}
             onRetryPreparation={retryPreparation}
           />
         ))}
