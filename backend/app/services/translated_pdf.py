@@ -274,12 +274,25 @@ def _source_text_mask(
             or x + component_width >= crop_width
             or y + component_height >= crop_height
         )
-        long_thin_boundary = (
-            component_height > (bottom - top) * 0.14
-            and component_width < component_height * 0.42
-        ) or (
-            component_width > (right - left) * 0.72
-            and component_height < component_width * 0.12
+        edge_margin = max(
+            2,
+            round(min(right - left, bottom - top) * 0.025),
+        )
+        near_content_edge = (
+            x <= left + edge_margin
+            or y <= top + edge_margin
+            or x + component_width >= right - edge_margin
+            or y + component_height >= bottom - edge_margin
+        )
+        long_thin_boundary = near_content_edge and (
+            (
+                component_height > (bottom - top) * 0.14
+                and component_width < component_height * 0.42
+            )
+            or (
+                component_width > (right - left) * 0.72
+                and component_height < component_width * 0.12
+            )
         )
         if component_coverage > _MAX_COMPONENT_COVERAGE or spans_crop:
             continue
