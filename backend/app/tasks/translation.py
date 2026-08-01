@@ -32,7 +32,7 @@ from app.tasks.preparation import normalize_job_id
 SessionFactory = Callable[[], Session]
 RetryJitter = Callable[[float, float], float]
 logger = logging.getLogger(__name__)
-TRANSLATION_RENDER_VERSION = "2"
+TRANSLATION_RENDER_VERSION = "4"
 
 
 class PageTranslator(Protocol):
@@ -408,8 +408,6 @@ def ensure_checkpoint_render_version(
 
     if checkpoint_pages.exists():
         rmtree(checkpoint_pages)
-    if records_directory.exists():
-        rmtree(records_directory)
     checkpoint_pages.mkdir(parents=True, exist_ok=True)
     records_directory.mkdir(parents=True, exist_ok=True)
     partial_version = checkpoint_root / ".render-version.part"
@@ -455,9 +453,9 @@ def reconcile_translation_checkpoints(
     for preview_page in preview_pages:
         if preview_page.name not in valid_names:
             (checkpoint_pages / preview_page.name).unlink(missing_ok=True)
-            (records_directory / f"{preview_page.stem}.json").unlink(
-                missing_ok=True
-            )
+            record_path = records_directory / f"{preview_page.stem}.json"
+            if not checkpoint_record_is_valid(record_path):
+                record_path.unlink(missing_ok=True)
 
     checkpoint_updated_at = None
     if translated_pages:
@@ -564,16 +562,21 @@ def translate_job(
                 session_factory,
             ):
                 raise TranslationClaimLost
-            translation = translator.translate_page(preview_page)
             translation_record = records_directory / f"{preview_page.stem}.json"
-            partial_record = (
-                records_directory / f"{preview_page.stem}.json.part"
-            )
-            partial_record.write_text(
-                translation.model_dump_json(),
-                encoding="utf-8",
-            )
-            partial_record.replace(translation_record)
+            if checkpoint_record_is_valid(translation_record):
+                translation = PageTranslation.model_validate_json(
+                    translation_record.read_text(encoding="utf-8")
+                )
+            else:
+                translation = translator.translate_page(preview_page)
+                partial_record = (
+                    records_directory / f"{preview_page.stem}.json.part"
+                )
+                partial_record.write_text(
+                    translation.model_dump_json(),
+                    encoding="utf-8",
+                )
+                partial_record.replace(translation_record)
             translated_page = translated_pages_directory / preview_page.name
             partial_page = translated_pages_directory / f"{preview_page.name}.part"
             partial_page.unlink(missing_ok=True)
