@@ -20,13 +20,14 @@ Meguyomi mempertahankan alur dan bentuk PDF asli. Proses per halaman dapat dipan
 
 ## Operating Context
 
-Pengguna masuk ke workspace privat, mengunggah PDF, menunggu persiapan halaman, memulai terjemahan ketika siap memakai kuota Gemini, memantau progres, mencoba ulang pekerjaan yang dapat dipulihkan, lalu mengunduh hasil.
+Pengguna masuk ke workspace privat, mengunggah PDF, menunggu persiapan halaman, memulai terjemahan ketika siap memakai kuota Gemini, memantau progres, menghentikan atau melanjutkan pekerjaan dari checkpoint, lalu mengunduh atau mencetak PDF penuh maupun parsial.
 
 ## Capabilities and Constraints
 
 - Input MVP adalah PDF manga Jepang dengan batas 50 MB dan 100 halaman.
 - Output adalah PDF dengan teks berbahasa Indonesia.
 - Pemrosesan berjalan berurutan per halaman.
+- Terjemahan aktif dapat dihentikan secara aman pada checkpoint terakhir; halaman yang sudah selesai tersedia sebagai PDF parsial untuk diunduh atau dicetak, dan proses dapat dilanjutkan.
 - Status, checkpoint, retry tertunda, dan hasil unduhan sudah menjadi bagian kontrak aplikasi.
 - UI tidak boleh mengubah route, nama field formulir, atau kontrak API yang ada.
 
