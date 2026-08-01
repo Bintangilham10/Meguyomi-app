@@ -22,6 +22,8 @@ function isTranslationJob(value: unknown): value is TranslationJob {
     "TRANSLATION_QUEUED",
     "TRANSLATING",
     "TRANSLATION_RETRY_WAIT",
+    "TRANSLATION_STOPPING",
+    "TRANSLATION_STOPPED",
     "COMPLETED",
     "FAILED",
   ]);
@@ -92,6 +94,7 @@ function isTranslationJob(value: unknown): value is TranslationJob {
     optionalDatesValid &&
     failureCodeValid &&
     resultAvailableValid &&
+    typeof value.canResumeTranslation === "boolean" &&
     typeof value.canRetryTranslation === "boolean" &&
     typeof value.canRetryPreparation === "boolean"
   );
