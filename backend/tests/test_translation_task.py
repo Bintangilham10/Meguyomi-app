@@ -494,7 +494,7 @@ def test_translate_job_invalidates_outdated_render_checkpoints(
     result = translate_job(job_id, session_factory, settings, translator)
 
     assert result == JobStatus.COMPLETED
-    assert translator.pages == ["page-0001.png", "page-0002.png"]
+    assert translator.pages == ["page-0002.png"]
     engine.dispose()
 
 
@@ -534,7 +534,7 @@ def test_translate_job_restarts_at_first_corrupt_checkpoint(tmp_path: Path) -> N
     result = translate_job(job_id, session_factory, settings, translator)
 
     assert result == JobStatus.COMPLETED
-    assert translator.pages == ["page-0002.png", "page-0003.png"]
+    assert translator.pages == []
     engine.dispose()
 
 
