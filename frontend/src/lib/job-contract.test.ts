@@ -17,6 +17,7 @@ const validJob = {
   translationRetryAttempt: 0,
   translationNextRetryAt: null,
   translationWaitReason: null,
+  canResumeTranslation: false,
   canRetryTranslation: false,
   canRetryPreparation: false,
   status: "QUEUED",
@@ -52,6 +53,8 @@ test("parseJobListResponse accepts every preparation status", () => {
     "TRANSLATION_QUEUED",
     "TRANSLATING",
     "TRANSLATION_RETRY_WAIT",
+    "TRANSLATION_STOPPING",
+    "TRANSLATION_STOPPED",
     "COMPLETED",
     "FAILED",
   ]) {
@@ -69,6 +72,7 @@ test("parseJobListResponse accepts every preparation status", () => {
             ...validJob,
             status,
             resultAvailable: status === "COMPLETED",
+            canResumeTranslation: status === "TRANSLATION_STOPPED",
           };
     const response = { data: [job], pagination: validPagination };
     assert.deepEqual(parseJobListResponse(response), response);
@@ -107,6 +111,13 @@ test("parseJobListResponse rejects malformed job data", () => {
   assert.equal(
     parseJobListResponse({
       data: [{ ...validJob, translatedPageCount: 13 }],
+      pagination: validPagination,
+    }),
+    null,
+  );
+  assert.equal(
+    parseJobListResponse({
+      data: [{ ...validJob, canResumeTranslation: undefined }],
       pagination: validPagination,
     }),
     null,
