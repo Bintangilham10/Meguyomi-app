@@ -20,7 +20,7 @@ function apiError(status: number, code: string, message: string): Response {
 
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ jobId: string }> },
 ): Promise<Response> {
   const session = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
@@ -33,7 +33,12 @@ export async function GET(
   }
 
   try {
-    const response = await fetch(`${getApiUrl()}/jobs/${jobId}/result`, {
+    const mode = new URL(request.url).searchParams.get("mode");
+    const resultUrl = new URL(`${getApiUrl()}/jobs/${jobId}/result`);
+    if (mode === "print") {
+      resultUrl.searchParams.set("disposition", "inline");
+    }
+    const response = await fetch(resultUrl, {
       headers: { Cookie: `${SESSION_COOKIE_NAME}=${session}` },
       cache: "no-store",
     });
