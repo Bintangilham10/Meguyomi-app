@@ -32,7 +32,7 @@ from app.tasks.preparation import normalize_job_id
 SessionFactory = Callable[[], Session]
 RetryJitter = Callable[[float, float], float]
 logger = logging.getLogger(__name__)
-TRANSLATION_RENDER_VERSION = "4"
+TRANSLATION_RENDER_VERSION = "5"
 
 
 class PageTranslator(Protocol):
