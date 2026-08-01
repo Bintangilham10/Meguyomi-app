@@ -42,6 +42,16 @@ const presentations: Record<TranslationJobStatus, JobStatusPresentation> = {
     detail: "Permintaan akan dicoba kembali secara otomatis.",
     tone: "active",
   },
+  TRANSLATION_STOPPING: {
+    label: "Menghentikan",
+    detail: "Worker menyelesaikan checkpoint terakhir dan menyusun PDF parsial.",
+    tone: "active",
+  },
+  TRANSLATION_STOPPED: {
+    label: "Dihentikan",
+    detail: "Checkpoint tersimpan dan dapat dilanjutkan kapan saja.",
+    tone: "ready",
+  },
   COMPLETED: {
     label: "Selesai",
     detail: "PDF terjemahan bahasa Indonesia siap diunduh.",
@@ -150,6 +160,8 @@ export function shouldShowTranslationProgress(
     (status === "TRANSLATION_QUEUED" ||
       status === "TRANSLATING" ||
       status === "TRANSLATION_RETRY_WAIT" ||
+      status === "TRANSLATION_STOPPING" ||
+      status === "TRANSLATION_STOPPED" ||
       status === "FAILED")
   );
 }
@@ -161,6 +173,7 @@ export function shouldRefreshJobStatus(status: TranslationJobStatus): boolean {
     status === "PROCESSING" ||
     status === "TRANSLATION_QUEUED" ||
     status === "TRANSLATING" ||
-    status === "TRANSLATION_RETRY_WAIT"
+    status === "TRANSLATION_RETRY_WAIT" ||
+    status === "TRANSLATION_STOPPING"
   );
 }
