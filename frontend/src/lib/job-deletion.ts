@@ -4,6 +4,7 @@ import type { TranslationJobStatus } from "@/types/job";
 const DELETABLE_JOB_STATUSES = new Set<TranslationJobStatus>([
   "READY_FOR_TRANSLATION",
   "TRANSLATION_RETRY_WAIT",
+  "TRANSLATION_STOPPED",
   "COMPLETED",
   "FAILED",
 ]);
