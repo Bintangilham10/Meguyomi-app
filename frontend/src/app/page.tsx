@@ -17,7 +17,7 @@ interface HomeProps {
 /*
 THESIS: Meguyomi is a working manga translation desk, not a generic SaaS dashboard.
 OWN-WORLD: Cold paper, dense black ink, coral proof marks, screentone, and one original anime translator.
-STORY: Upload a Japanese PDF, watch each page move through the desk, then collect the Indonesian edition.
+STORY: Upload a manga PDF in any source language, watch each page move through the desk, then collect the Indonesian edition.
 FIRST VIEWPORT: The upload task dominates the left while the translator character anchors a dark proofing panel on the right.
 FORM: Asymmetric editorial workspace, selected directly from the user's manga and waifu direction.
 */
@@ -72,13 +72,13 @@ export default async function Home({ searchParams }: HomeProps) {
         <div className="grid overflow-hidden rounded-[14px] border border-[var(--ink)] bg-[var(--surface)] lg:min-h-[38rem] lg:grid-cols-[minmax(0,1.18fr)_minmax(22rem,0.82fr)]">
           <section aria-labelledby="upload-title" className="flex flex-col justify-center p-6 sm:p-10 lg:p-12">
             <p className="mb-5 w-fit rounded-[8px] bg-[var(--accent-wash)] px-3 py-1.5 text-sm font-bold text-[var(--accent-strong)]">
-              Jepang ke Indonesia
+              Bahasa apa pun ke Indonesia
             </p>
             <h1 id="upload-title" className="display-face max-w-[13ch] text-4xl leading-[1.03] sm:text-5xl lg:text-6xl">
               Satu PDF masuk. Ceritanya terbaca.
             </h1>
             <p className="mt-5 max-w-[52ch] text-base leading-7 text-[var(--muted)] sm:text-lg">
-              Unggah manga Jepang, mulai terjemahan saat siap, lalu ambil PDF bahasa Indonesia.
+              Unggah manga dalam bahasa apa pun. Meguyomi mendeteksi bahasa sumber lalu menghasilkan PDF bahasa Indonesia.
             </p>
             <UploadForm />
           </section>
