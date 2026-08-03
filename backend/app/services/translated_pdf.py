@@ -23,6 +23,10 @@ class ResultBuildError(Exception):
     pass
 
 
+class TranslationQualityError(ResultBuildError):
+    pass
+
+
 _FONT_PATH = (
     Path(__file__).resolve().parent.parent
     / "assets"
@@ -40,6 +44,10 @@ _MAX_SOURCE_PADDING = 64
 _MAX_STROKE_COVERAGE = 0.55
 _MAX_COMPONENT_COVERAGE = 0.22
 _MIN_REGION_CONTRAST = 6.0
+_MAX_PLACEMENT_OVERLAP_RATIO = 0.70
+_MIN_MASK_QUALITY_SAMPLES = 8
+_MIN_MASK_FAILURES = 3
+_MAX_MASK_FAILURE_RATIO = 0.20
 _VECTOR_HEART = "\u2661"
 _VECTOR_MUSIC_NOTE = "\u266a"
 _VECTOR_SYMBOLS = frozenset({_VECTOR_HEART, _VECTOR_MUSIC_NOTE})
@@ -76,22 +84,22 @@ _MOJIBAKE_REPLACEMENTS = {
     "â€“": "-",
 }
 _REGION_MIN_FONT_RATIOS = {
-    "dialogue": 0.008,
-    "caption": 0.0075,
-    "title": 0.008,
-    "sfx": 0.007,
+    "dialogue": 0.012,
+    "caption": 0.011,
+    "title": 0.014,
+    "sfx": 0.010,
 }
 _REGION_PREFERRED_MIN_FONT_RATIOS = {
-    "dialogue": 0.010,
-    "caption": 0.0095,
-    "title": 0.011,
-    "sfx": 0.008,
+    "dialogue": 0.020,
+    "caption": 0.018,
+    "title": 0.022,
+    "sfx": 0.014,
 }
 _REGION_MAX_FONT_RATIOS = {
-    "dialogue": 0.017,
-    "caption": 0.0155,
-    "title": 0.022,
-    "sfx": 0.013,
+    "dialogue": 0.045,
+    "caption": 0.040,
+    "title": 0.060,
+    "sfx": 0.030,
 }
 _REGION_MAX_LINES = {
     "dialogue": 10,
@@ -612,6 +620,40 @@ def _intersection_area(
     return max(0, right - left) * max(0, bottom - top)
 
 
+def _validate_region_placements(
+    regions: list[TranslationRegion],
+    width: int,
+    height: int,
+) -> None:
+    boxes = [
+        _placement_pixel_box(region, width, height)
+        for region in regions
+        if (region.region_type or "dialogue") != "sfx"
+    ]
+    for index, first in enumerate(boxes):
+        first_area = max(1, _box_area(first))
+        for second in boxes[index + 1 :]:
+            overlap = _intersection_area(first, second)
+            if overlap <= 0:
+                continue
+            smaller_area = min(first_area, max(1, _box_area(second)))
+            if overlap / smaller_area > _MAX_PLACEMENT_OVERLAP_RATIO:
+                raise TranslationQualityError(
+                    "Translated text regions overlap too heavily."
+                )
+
+
+def _validate_mask_quality(attempts: int, failures: int) -> None:
+    if (
+        attempts >= _MIN_MASK_QUALITY_SAMPLES
+        and failures >= _MIN_MASK_FAILURES
+        and failures / attempts > _MAX_MASK_FAILURE_RATIO
+    ):
+        raise TranslationQualityError(
+            "Source text masking failed for too many regions."
+        )
+
+
 def _scaled_box(
     box: tuple[int, int, int, int],
     width: int,
@@ -801,7 +843,9 @@ def _choose_region_layout(
         except ResultBuildError:
             continue
         return candidate, font, wrapped, bounds, spacing
-    raise ResultBuildError("Translated text does not fit inside its safe region.")
+    raise TranslationQualityError(
+        "Translated text does not fit inside its safe region."
+    )
 
 
 def _draw_vector_symbol(
@@ -987,167 +1031,6 @@ def _compact_backdrop_box(
     )
 
 
-def _sfx_candidate_boxes(
-    source_box: tuple[int, int, int, int],
-    label_width: int,
-    label_height: int,
-    page_width: int,
-    page_height: int,
-) -> list[tuple[int, int, int, int]]:
-    left, top, right, bottom = source_box
-    center_x = (left + right) // 2
-    center_y = (top + bottom) // 2
-    gap = max(6, round(min(page_width, page_height) * 0.004))
-    raw = (
-        (center_x - label_width // 2, top - gap - label_height),
-        (center_x - label_width // 2, bottom + gap),
-        (left - gap - label_width, center_y - label_height // 2),
-        (right + gap, center_y - label_height // 2),
-        (left, top - gap - label_height),
-        (right - label_width, bottom + gap),
-    )
-    candidates: list[tuple[int, int, int, int]] = []
-    for candidate_left, candidate_top in raw:
-        candidate = (
-            candidate_left,
-            candidate_top,
-            candidate_left + label_width,
-            candidate_top + label_height,
-        )
-        if (
-            candidate[0] < 2
-            or candidate[1] < 2
-            or candidate[2] > page_width - 2
-            or candidate[3] > page_height - 2
-        ):
-            continue
-        if candidate not in candidates:
-            candidates.append(candidate)
-    return candidates
-
-
-def _render_sfx_annotations(
-    image: Image.Image,
-    source_pixels: np.ndarray,
-    regions: list[TranslationRegion],
-    occupied_boxes: list[tuple[int, int, int, int]],
-) -> None:
-    page_width, page_height = image.size
-    short_edge = min(page_width, page_height)
-    desired_size = max(_MIN_FONT_SIZE, round(short_edge * 0.0105))
-    max_label_width = max(120, round(page_width * 0.18))
-    max_label_height = max(60, desired_size * 4)
-    measure_image = Image.new("RGB", (8, 8), "white")
-    measure_draw = ImageDraw.Draw(measure_image)
-    seen: list[tuple[str, float, float]] = []
-    rendered_count = 0
-    rendered_per_text: dict[str, int] = {}
-    for region in regions:
-        if rendered_count >= 8:
-            break
-        display_text = _normalize_display_text(region.translated_text, "sfx")
-        if not display_text:
-            continue
-        normalized_key = display_text.casefold()
-        if rendered_per_text.get(normalized_key, 0) >= 2:
-            continue
-        source_box = _pixel_box(region, page_width, page_height)
-        center_x = (source_box[0] + source_box[2]) / 2
-        center_y = (source_box[1] + source_box[3]) / 2
-        duplicate_distance = short_edge * 0.10
-        if any(
-            previous_text.casefold() == display_text.casefold()
-            and ((center_x - previous_x) ** 2 + (center_y - previous_y) ** 2)
-            ** 0.5
-            < duplicate_distance
-            for previous_text, previous_x, previous_y in seen
-        ):
-            continue
-        try:
-            font, wrapped, bounds, spacing = _fit_text(
-                measure_draw,
-                display_text,
-                max_label_width,
-                max_label_height,
-                min_font_size=desired_size,
-                max_font_size=min(42, desired_size + 8),
-                max_lines=2,
-            )
-        except ResultBuildError:
-            continue
-        padding_x = max(8, _font_size(font) // 2)
-        padding_y = max(5, _font_size(font) // 4)
-        label_width = bounds[2] - bounds[0] + 2 * padding_x
-        label_height = bounds[3] - bounds[1] + 2 * padding_y
-        candidates = _sfx_candidate_boxes(
-            source_box,
-            label_width,
-            label_height,
-            page_width,
-            page_height,
-        )
-        best_box: tuple[int, int, int, int] | None = None
-        best_score: float | None = None
-        for candidate in candidates:
-            candidate_area = max(1, _box_area(candidate))
-            occupied_overlap = sum(
-                _intersection_area(candidate, occupied)
-                for occupied in occupied_boxes
-            )
-            if occupied_overlap / candidate_area > 0.18:
-                continue
-            crop = source_pixels[
-                candidate[1] : candidate[3],
-                candidate[0] : candidate[2],
-            ]
-            texture = (
-                float(cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY).std())
-                if crop.size
-                else 255.0
-            )
-            distance = (
-                ((candidate[0] + candidate[2]) / 2 - center_x) ** 2
-                + ((candidate[1] + candidate[3]) / 2 - center_y) ** 2
-            ) ** 0.5
-            score = occupied_overlap * 10 + texture * 2 + distance
-            if best_score is None or score < best_score:
-                best_score = score
-                best_box = candidate
-        if best_box is None:
-            continue
-        label = image.crop(best_box)
-        background = (250, 249, 246)
-        fill = (24, 24, 24)
-        replaced = _apply_translucent_backdrop(
-            label,
-            (0, 0, label.width - 1, label.height - 1),
-            background,
-            rounded=True,
-            alpha=226,
-        )
-        label.close()
-        label = replaced
-        label_draw = ImageDraw.Draw(label)
-        _draw_wrapped_text(
-            label_draw,
-            (padding_x, padding_y),
-            wrapped,
-            font,
-            fill,
-            spacing,
-            bounds[2] - bounds[0],
-        )
-        image.paste(label, (best_box[0], best_box[1]))
-        label.close()
-        occupied_boxes.append(best_box)
-        seen.append((display_text, center_x, center_y))
-        rendered_per_text[normalized_key] = (
-            rendered_per_text.get(normalized_key, 0) + 1
-        )
-        rendered_count += 1
-    measure_image.close()
-
-
 def render_translated_page(
     source: Path,
     destination: Path,
@@ -1157,22 +1040,27 @@ def render_translated_page(
         destination.parent.mkdir(parents=True, exist_ok=True)
         with Image.open(source) as opened:
             image = opened.convert("RGB")
+        measure_image: Image.Image | None = None
         try:
             source_pixels = np.asarray(image, dtype=np.uint8).copy()
-            measure_image = Image.new("RGB", (8, 8), "white")
-            measure_draw = ImageDraw.Draw(measure_image)
-            main_regions = [
+            renderable_regions = [
                 region
                 for region in translation.regions
-                if (region.region_type or "dialogue") != "sfx"
-                and _normalize_display_text(
+                if _normalize_display_text(
                     region.translated_text,
                     region.region_type or "dialogue",
                 )
             ]
+            _validate_region_placements(
+                renderable_regions,
+                image.width,
+                image.height,
+            )
+            measure_image = Image.new("RGB", (8, 8), "white")
+            measure_draw = ImageDraw.Draw(measure_image)
             initial_boxes = [
                 _placement_pixel_box(region, image.width, image.height)
-                for region in main_regions
+                for region in renderable_regions
             ]
             layouts: list[
                 tuple[
@@ -1185,22 +1073,35 @@ def render_translated_page(
                     int,
                 ]
             ] = []
-            for index, region in enumerate(main_regions):
+            for index, region in enumerate(renderable_regions):
                 other_boxes = [
                     box
                     for other_index, box in enumerate(initial_boxes)
                     if other_index != index
                 ]
-                placement_box, font, wrapped, bounds, spacing = (
-                    _choose_region_layout(
-                        measure_draw,
-                        source_pixels,
-                        region,
-                        image.width,
-                        image.height,
-                        other_boxes,
+                try:
+                    placement_box, font, wrapped, bounds, spacing = (
+                        _choose_region_layout(
+                            measure_draw,
+                            source_pixels,
+                            region,
+                            image.width,
+                            image.height,
+                            other_boxes,
+                        )
                     )
-                )
+                except ResultBuildError:
+                    if (region.region_type or "dialogue") != "sfx":
+                        raise
+                    logger.info(
+                        json.dumps(
+                            {
+                                "event": "translated_sfx_skipped",
+                                "reason": "text_does_not_fit",
+                            }
+                        )
+                    )
+                    continue
                 layouts.append(
                     (
                         region,
@@ -1218,6 +1119,8 @@ def render_translated_page(
                 dtype=np.uint8,
             )
             plans: list[_RegionPlan] = []
+            mask_quality_attempts = 0
+            mask_quality_failures = 0
 
             # Build one union mask first. This prevents a later overlapping
             # region from erasing Indonesian text drawn for an earlier one.
@@ -1270,18 +1173,24 @@ def render_translated_page(
                     mask_target_box[2] - crop_left,
                     mask_target_box[3] - crop_top,
                 )
-                if region_type == "title":
-                    local_mask = np.zeros(
-                        region_pixels.shape[:2],
-                        dtype=np.uint8,
+                local_mask, mask_succeeded = _source_text_mask(
+                    region_pixels,
+                    content_box,
+                )
+                if region_type in {"dialogue", "caption"}:
+                    mask_quality_attempts += 1
+                    if not mask_succeeded:
+                        mask_quality_failures += 1
+                if region_type == "sfx" and not mask_succeeded:
+                    logger.info(
+                        json.dumps(
+                            {
+                                "event": "translated_sfx_skipped",
+                                "reason": "source_mask_failed",
+                            }
+                        )
                     )
-                    local_mask.fill(0)
-                    mask_succeeded = False
-                else:
-                    local_mask, mask_succeeded = _source_text_mask(
-                        region_pixels,
-                        content_box,
-                    )
+                    continue
                 page_mask[crop_top:crop_bottom, crop_left:crop_right] = (
                     np.maximum(
                         page_mask[
@@ -1303,6 +1212,11 @@ def render_translated_page(
                     )
                 )
 
+            _validate_mask_quality(
+                mask_quality_attempts,
+                mask_quality_failures,
+            )
+
             if np.any(page_mask):
                 erased_pixels = cv2.inpaint(
                     source_pixels,
@@ -1313,7 +1227,6 @@ def render_translated_page(
                 image.close()
                 image = Image.fromarray(erased_pixels)
 
-            occupied_boxes = [plan.placement_box for plan in plans]
             for plan in plans:
                 region = plan.region
                 left, top, right, bottom = plan.placement_box
@@ -1370,20 +1283,14 @@ def render_translated_page(
                 image.paste(text_layer, (left, top))
                 text_layer.close()
 
-            _render_sfx_annotations(
-                image,
-                source_pixels,
-                [
-                    region
-                    for region in translation.regions
-                    if (region.region_type or "dialogue") == "sfx"
-                ],
-                occupied_boxes,
-            )
             image.save(destination, format="PNG", compress_level=6)
-            measure_image.close()
         finally:
+            if measure_image is not None:
+                measure_image.close()
             image.close()
+    except ResultBuildError:
+        destination.unlink(missing_ok=True)
+        raise
     except Exception as error:
         destination.unlink(missing_ok=True)
         raise ResultBuildError("Translated page rendering failed.") from error
