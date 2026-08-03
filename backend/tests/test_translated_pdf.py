@@ -215,8 +215,123 @@ def test_choose_region_layout_keeps_short_text_in_declared_box() -> None:
     )
 
     assert placement_box == (100, 140, 400, 560)
-    assert getattr(font, "size", 0) <= 17
+    assert 30 <= getattr(font, "size", 0) <= 45
     measure_image.close()
+
+
+def test_choose_region_layout_uses_readable_font_on_long_webtoon() -> None:
+    translation = PageTranslation.model_validate(
+        {
+            "regions": [
+                {
+                    "box_2d": [100, 100, 120, 500],
+                    "placement_box_2d": [95, 80, 125, 520],
+                    "region_type": "dialogue",
+                    "source_text": "Hello",
+                    "translated_text": "Halo, apa kabar?",
+                }
+            ]
+        }
+    )
+    measure_image = Image.new("RGB", (8, 8), "white")
+    draw = ImageDraw.Draw(measure_image)
+
+    _, font, _, _, _ = _choose_region_layout(
+        draw,
+        np.zeros((1, 1, 3), dtype=np.uint8),
+        translation.regions[0],
+        1080,
+        15_000,
+        [],
+    )
+
+    assert getattr(font, "size", 0) >= 30
+    measure_image.close()
+
+
+def test_render_translated_page_rejects_heavily_overlapping_regions(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.png"
+    destination = tmp_path / "translated.png"
+    make_image(source, "white")
+    translation = PageTranslation.model_validate(
+        {
+            "regions": [
+                {
+                    "box_2d": [100, 100, 300, 500],
+                    "placement_box_2d": [80, 80, 340, 540],
+                    "region_type": "dialogue",
+                    "source_text": "Hello",
+                    "translated_text": "Halo",
+                },
+                {
+                    "box_2d": [120, 120, 320, 520],
+                    "placement_box_2d": [80, 80, 340, 540],
+                    "region_type": "caption",
+                    "source_text": "Again",
+                    "translated_text": "Lagi",
+                },
+            ]
+        }
+    )
+
+    with pytest.raises(ResultBuildError, match="overlap too heavily"):
+        render_translated_page(source, destination, translation)
+
+    assert not destination.exists()
+
+
+def test_render_translated_page_rejects_mass_mask_failure(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.png"
+    destination = tmp_path / "translated.png"
+    make_image(source, "white")
+    regions = []
+    for index in range(8):
+        top = 40 + index * 115
+        regions.append(
+            {
+                "box_2d": [top, 100, top + 70, 500],
+                "placement_box_2d": [top, 80, top + 80, 520],
+                "region_type": "dialogue",
+                "source_text": f"Source {index}",
+                "translated_text": "Hai",
+            }
+        )
+    translation = PageTranslation.model_validate({"regions": regions})
+
+    with pytest.raises(ResultBuildError, match="masking failed"):
+        render_translated_page(source, destination, translation)
+
+    assert not destination.exists()
+
+
+def test_render_translated_page_skips_unsafe_sfx_without_badge(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.png"
+    destination = tmp_path / "translated.png"
+    make_image(source, "gray")
+    translation = PageTranslation.model_validate(
+        {
+            "regions": [
+                {
+                    "box_2d": [300, 250, 450, 450],
+                    "placement_box_2d": [280, 220, 470, 480],
+                    "region_type": "sfx",
+                    "source_text": "BAM",
+                    "translated_text": "DUM",
+                }
+            ]
+        }
+    )
+
+    render_translated_page(source, destination, translation)
+
+    with Image.open(source) as original, Image.open(destination) as rendered:
+        assert np.array_equal(np.asarray(original), np.asarray(rendered))
 
 
 def test_placement_candidates_expand_only_modestly() -> None:
