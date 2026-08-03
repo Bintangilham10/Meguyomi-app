@@ -138,6 +138,16 @@ export function getJobStatusPresentation(
   }
   if (
     status === "FAILED" &&
+    failureCode === "RESULT_QUALITY_FAILED"
+  ) {
+    return {
+      label: "Tata letak perlu dipindai ulang",
+      detail: "Koordinat teks belum cukup aman. Coba terjemahkan lagi untuk memindai ulang halaman ini.",
+      tone: "danger",
+    };
+  }
+  if (
+    status === "FAILED" &&
     (failureCode === "RESULT_BUILD_FAILED" ||
       failureCode === "TRANSLATION_FAILED")
   ) {
