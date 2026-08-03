@@ -105,7 +105,7 @@ export function UploadForm() {
       >
         <span className="block text-lg font-bold">Taruh bab manga di meja</span>
         <span id="pdf-help" className="mt-2 block text-sm leading-6 text-[var(--muted)]">
-          PDF Jepang, maksimal 50 MB dan 100 halaman. PDF terenkripsi tidak didukung.
+          PDF manga dalam bahasa apa pun, maksimal 50 MB dan 100 halaman. PDF terenkripsi tidak didukung.
         </span>
         <input
           ref={fileInputRef}
