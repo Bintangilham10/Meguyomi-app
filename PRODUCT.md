@@ -8,11 +8,11 @@ web
 
 ## Users
 
-Pengguna utama adalah pembaca atau penerjemah manga berbahasa Indonesia yang memiliki PDF manga Jepang dan ingin menghasilkan PDF versi bahasa Indonesia dalam satu alur kerja privat.
+Pengguna utama adalah pembaca atau penerjemah manga berbahasa Indonesia yang memiliki PDF manga dalam berbagai bahasa dan ingin menghasilkan PDF versi bahasa Indonesia dalam satu alur kerja privat.
 
 ## Product Purpose
 
-Meguyomi menerima satu PDF manga Jepang, menyiapkan setiap halaman, menerjemahkan teks dengan AI, memasang hasil terjemahan kembali ke halaman, dan menyediakan PDF hasil untuk diunduh.
+Meguyomi menerima satu PDF manga dalam bahasa apa pun, menyiapkan setiap halaman, mendeteksi bahasa sumber per blok teks, menerjemahkannya ke bahasa Indonesia dengan AI, memasang hasil terjemahan kembali ke halaman, dan menyediakan PDF hasil untuk diunduh.
 
 ## Positioning
 
@@ -24,8 +24,11 @@ Pengguna masuk ke workspace privat, mengunggah PDF, menunggu persiapan halaman, 
 
 ## Capabilities and Constraints
 
-- Input MVP adalah PDF manga Jepang dengan batas 50 MB dan 100 halaman.
+- Input MVP adalah PDF manga dalam bahasa apa pun dengan batas 50 MB dan 100 halaman.
+- Bahasa sumber dideteksi otomatis per blok sehingga satu halaman dapat memuat beberapa bahasa.
+- Halaman webtoon yang sangat panjang dipindai sebagai tile vertikal overlap lalu koordinatnya digabungkan kembali.
 - Output adalah PDF dengan teks berbahasa Indonesia.
+- Hasil dengan koordinat bertabrakan atau kegagalan pembersihan teks yang terlalu tinggi tidak diterbitkan dan dapat dipindai ulang.
 - Pemrosesan berjalan berurutan per halaman.
 - Terjemahan aktif dapat dihentikan secara aman pada checkpoint terakhir; halaman yang sudah selesai tersedia sebagai PDF parsial untuk diunduh atau dicetak, dan proses dapat dilanjutkan.
 - Status, checkpoint, retry tertunda, dan hasil unduhan sudah menjadi bagian kontrak aplikasi.
