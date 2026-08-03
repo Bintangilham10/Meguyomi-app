@@ -23,6 +23,7 @@ from app.services.manga_translation import (
 )
 from app.services.translated_pdf import (
     ResultBuildError,
+    TranslationQualityError,
     build_result_pdf,
     render_translated_page,
 )
@@ -33,7 +34,7 @@ from app.tasks.preparation import normalize_job_id
 SessionFactory = Callable[[], Session]
 RetryJitter = Callable[[float, float], float]
 logger = logging.getLogger(__name__)
-TRANSLATION_RENDER_VERSION = "5"
+TRANSLATION_RENDER_VERSION = "6"
 
 
 class PageTranslator(Protocol):
@@ -418,12 +419,14 @@ def checkpoint_page_is_valid(checkpoint: Path, preview: Path) -> bool:
 
 def checkpoint_record_is_valid(record_path: Path) -> bool:
     try:
-        PageTranslation.model_validate_json(
-            record_path.read_text(encoding="utf-8")
-        )
+        payload = json.loads(record_path.read_text(encoding="utf-8"))
+        translation = PageTranslation.model_validate(payload)
     except (OSError, ValueError):
         return False
-    return True
+    return all(
+        isinstance(region, dict) and "source_language" in region
+        for region in payload.get("regions", [])
+    ) and len(translation.regions) == len(payload.get("regions", []))
 
 
 def ensure_checkpoint_render_version(
@@ -817,7 +820,11 @@ def translate_job(
             translated_page = translated_pages_directory / preview_page.name
             partial_page = translated_pages_directory / f"{preview_page.name}.part"
             partial_page.unlink(missing_ok=True)
-            render_translated_page(preview_page, partial_page, translation)
+            try:
+                render_translated_page(preview_page, partial_page, translation)
+            except TranslationQualityError:
+                translation_record.unlink(missing_ok=True)
+                raise
             partial_page.replace(translated_page)
             translated_pages.append(translated_page)
             if not record_translation_progress(
@@ -868,6 +875,8 @@ def translate_job(
             session_factory,
             settings,
         )
+    except TranslationQualityError:
+        failure_code = "RESULT_QUALITY_FAILED"
     except ResultBuildError:
         failure_code = "RESULT_BUILD_FAILED"
     except Exception:
@@ -945,6 +954,8 @@ def translate_job_task(job_id: str) -> str:
         max_image_bytes=settings.gemini_max_image_bytes,
         max_response_bytes=settings.gemini_max_response_bytes,
         max_output_tokens=settings.gemini_max_output_tokens,
+        max_tile_aspect_ratio=settings.gemini_max_tile_aspect_ratio,
+        tile_overlap_ratio=settings.gemini_tile_overlap_ratio,
         min_request_interval_seconds=(
             settings.gemini_min_request_interval_seconds
         ),
