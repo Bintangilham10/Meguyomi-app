@@ -75,6 +75,17 @@ test("getJobStatusPresentation explains exhausted Gemini rate limits", () => {
 });
 
 
+test("getJobStatusPresentation explains unsafe translation layout", () => {
+  const presentation = getJobStatusPresentation(
+    "FAILED",
+    "RESULT_QUALITY_FAILED",
+  );
+
+  assert.equal(presentation.label, "Tata letak perlu dipindai ulang");
+  assert.match(presentation.detail, /memindai ulang/i);
+});
+
+
 test("getJobStatusPresentation explains every automatic wait reason", () => {
   assert.match(
     getJobStatusPresentation(
