@@ -57,7 +57,10 @@ def api_error(status_code: int, code: str, message: str) -> JSONResponse:
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=JobResponse)
 async def create_job(
-    file: Annotated[UploadFile, File(description="PDF manga berbahasa Jepang")],
+    file: Annotated[
+        UploadFile,
+        File(description="PDF manga dengan bahasa sumber apa pun"),
+    ],
     username: AuthenticatedUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> JobResponse | JSONResponse:
