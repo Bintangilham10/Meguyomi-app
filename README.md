@@ -1,17 +1,17 @@
 # Meguyomi
 
 Meguyomi adalah proyek aplikasi web privat untuk menerjemahkan manga dalam
-format PDF dari bahasa Jepang ke bahasa Indonesia. Alur MVP yang direncanakan
-meliputi login, upload PDF, pemrosesan terjemahan di latar belakang, pratinjau,
-dan download PDF hasil terjemahan.
+format PDF dari berbagai bahasa sumber ke bahasa Indonesia. Alur MVP yang
+direncanakan meliputi login, upload PDF, pemrosesan terjemahan di latar belakang,
+pratinjau, dan download PDF hasil terjemahan.
 
 Fondasi aplikasi sudah menyediakan Next.js, FastAPI, Celery, PostgreSQL, Redis,
 Docker Compose, login privat satu akun, UI dan API upload/riwayat PDF, worker
 preview, integrasi Gemini Vision untuk OCR sekaligus terjemahan, penyusunan PDF
-hasil, dan download privat. Penggantian teks masih menggunakan kompositor MVP:
-kotak sumber dipisahkan dari area penempatan, teks dialog/caption Jepang
-dibersihkan sebelum teks Indonesia ditata, dan SFX dekoratif dipertahankan
-sebagai bagian artwork dengan anotasi Indonesia.
+hasil, dan download privat. Bahasa sumber dideteksi otomatis per blok teks.
+Penggantian teks masih menggunakan kompositor MVP: kotak sumber dipisahkan dari
+area penempatan, teks sumber dibersihkan sebelum teks Indonesia ditata, dan SFX
+hanya diganti di tempat ketika mask teks sumber dapat dibuat dengan aman.
 
 Task retry dan watchdog berjalan pada worker maintenance terpisah agar tetap
 aktif ketika worker terjemahan sedang memproses bab panjang.
@@ -67,13 +67,15 @@ aktif ketika worker terjemahan sedang memproses bab panjang.
 
 ## Alur terjemahan MVP
 
-1. Login lalu upload satu PDF manga Jepang.
+1. Login lalu upload satu PDF manga dalam bahasa apa pun.
 2. Worker merender halaman hingga status `READY_FOR_TRANSLATION`.
 3. Tekan **Mulai terjemahan** untuk menyetujui penggunaan kuota Gemini API.
-4. Worker mengirim satu halaman per permintaan, memvalidasi JSON kotak teks,
+4. Worker mendeteksi bahasa setiap blok teks, memvalidasi JSON kotak teks,
    meminta area penempatan balon/panel yang aman, menampilkan progres per
-   halaman, menempatkan terjemahan Indonesia, dan menyusun PDF hasil. Worker
-   memproses satu job pada satu waktu, memberi jeda
+   halaman, menempatkan terjemahan Indonesia, dan menyusun PDF hasil. Halaman
+   webtoon yang sangat panjang otomatis dibagi menjadi tile vertikal yang saling
+   overlap, lalu koordinatnya dipetakan kembali dan blok duplikat digabungkan.
+   Worker memproses satu job pada satu waktu, memberi jeda
    antar-request, dan mencoba ulang satu kali error Gemini yang sangat singkat.
    HTTP 429, HTTP 5xx, timeout, dan gangguan koneksi yang lebih lama dipindahkan
    ke status `TRANSLATION_RETRY_WAIT` agar worker dapat mengerjakan job lain.
