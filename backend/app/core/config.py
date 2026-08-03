@@ -45,6 +45,16 @@ class Settings(BaseSettings):
         le=10 * 1024 * 1024,
     )
     gemini_max_output_tokens: int = Field(default=8_192, ge=256, le=65_536)
+    gemini_max_tile_aspect_ratio: float = Field(
+        default=2.0,
+        ge=1.0,
+        le=4.0,
+    )
+    gemini_tile_overlap_ratio: float = Field(
+        default=0.12,
+        ge=0.05,
+        le=0.4,
+    )
     gemini_min_request_interval_seconds: float = Field(
         default=15.0,
         ge=0.0,
