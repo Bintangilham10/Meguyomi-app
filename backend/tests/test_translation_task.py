@@ -17,7 +17,7 @@ from app.services.manga_translation import (
     GeminiTranslationError,
     PageTranslation,
 )
-from app.services.translated_pdf import ResultBuildError
+from app.services.translated_pdf import ResultBuildError, TranslationQualityError
 from app.tasks import translation as translation_module
 from app.tasks.translation import (
     defer_translation_retry,
@@ -61,6 +61,31 @@ class FailingTranslator:
                 retry_after_seconds=self.retry_after_seconds,
             )
         return PageTranslation(regions=[])
+
+
+def test_checkpoint_record_requires_current_language_metadata(
+    tmp_path: Path,
+) -> None:
+    record = tmp_path / "page-0001.json"
+    record.write_text(
+        '{"regions":[{"box_2d":[100,100,300,500],'
+        '"placement_box_2d":[80,80,340,540],'
+        '"region_type":"dialogue","source_text":"Hola",'
+        '"translated_text":"Halo"}]}',
+        encoding="utf-8",
+    )
+
+    assert translation_module.checkpoint_record_is_valid(record) is False
+
+    record.write_text(
+        '{"regions":[{"box_2d":[100,100,300,500],'
+        '"placement_box_2d":[80,80,340,540],'
+        '"region_type":"dialogue","source_language":"es",'
+        '"source_text":"Hola","translated_text":"Halo"}]}',
+        encoding="utf-8",
+    )
+
+    assert translation_module.checkpoint_record_is_valid(record) is True
 
 
 def make_session_factory():
@@ -720,6 +745,69 @@ def test_translate_job_rebuilds_pdf_without_retranslating_checkpoint_pages(
     engine.dispose()
 
 
+def test_translate_job_discards_unsafe_layout_record_before_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine, session_factory = make_session_factory()
+    settings = Settings(storage_root=tmp_path)
+    job_id = add_translation_job(session_factory, tmp_path, page_count=1)
+    with session_factory() as session:
+        job = session.get(TranslationJob, job_id)
+        assert job is not None
+        job.prepared_at = datetime.now(timezone.utc)
+        session.commit()
+    real_render_translated_page = translation_module.render_translated_page
+
+    def reject_layout(_source, _destination, _translation) -> None:
+        raise TranslationQualityError("forced unsafe layout")
+
+    monkeypatch.setattr(
+        translation_module,
+        "render_translated_page",
+        reject_layout,
+    )
+    first_translator = FakeTranslator()
+
+    first_result = translate_job(
+        job_id,
+        session_factory,
+        settings,
+        first_translator,
+    )
+
+    record = tmp_path / "translations" / job_id / "page-0001.json"
+    assert first_result == JobStatus.FAILED
+    assert first_translator.pages == ["page-0001.png"]
+    assert not record.exists()
+    with session_factory() as session:
+        job = session.get(TranslationJob, job_id)
+        assert job is not None
+        assert job.failure_code == "RESULT_QUALITY_FAILED"
+        assert job.can_retry_translation
+        job.status = JobStatus.TRANSLATION_QUEUED
+        job.failure_code = None
+        session.commit()
+
+    monkeypatch.setattr(
+        translation_module,
+        "render_translated_page",
+        real_render_translated_page,
+    )
+    retry_translator = FakeTranslator()
+
+    retry_result = translate_job(
+        job_id,
+        session_factory,
+        settings,
+        retry_translator,
+    )
+
+    assert retry_result == JobStatus.COMPLETED
+    assert retry_translator.pages == ["page-0001.png"]
+    engine.dispose()
+
+
 def test_translate_job_discards_checkpoint_older_than_retention(
     tmp_path: Path,
 ) -> None:
@@ -781,6 +869,8 @@ def test_translate_job_task_configures_gemini_retry_and_pacing(
     settings = Settings(
         storage_root=tmp_path,
         gemini_api_key="test-key",
+        gemini_max_tile_aspect_ratio=2.5,
+        gemini_tile_overlap_ratio=0.2,
         gemini_min_request_interval_seconds=18,
         gemini_max_retries=4,
         gemini_retry_base_delay_seconds=3,
@@ -813,6 +903,8 @@ def test_translate_job_task_configures_gemini_retry_and_pacing(
     result = translation_module.translate_job_task(str(uuid4()))
 
     assert result == JobStatus.COMPLETED
+    assert captured["max_tile_aspect_ratio"] == 2.5
+    assert captured["tile_overlap_ratio"] == 0.2
     assert captured["min_request_interval_seconds"] == 18
     assert captured["max_retries"] == 4
     assert captured["retry_base_delay_seconds"] == 3
