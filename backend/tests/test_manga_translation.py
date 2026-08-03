@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 from io import BytesIO
@@ -50,7 +51,7 @@ def test_page_translation_rejects_invalid_model_coordinates() -> None:
         )
 
 
-def test_page_translation_rejects_more_than_eighty_regions() -> None:
+def test_page_translation_rejects_more_than_four_hundred_regions() -> None:
     region = {
         "box_2d": [100, 200, 400, 800],
         "source_text": "こんにちは",
@@ -58,7 +59,7 @@ def test_page_translation_rejects_more_than_eighty_regions() -> None:
     }
 
     with pytest.raises(ValidationError):
-        PageTranslation.model_validate({"regions": [region] * 81})
+        PageTranslation.model_validate({"regions": [region] * 401})
 
 
 def test_page_translation_accepts_legacy_region_without_placement_metadata() -> None:
@@ -76,6 +77,38 @@ def test_page_translation_accepts_legacy_region_without_placement_metadata() -> 
 
     assert translation.regions[0].placement_box_2d is None
     assert translation.regions[0].region_type is None
+    assert translation.regions[0].source_language == "und"
+
+
+def test_page_translation_validates_detected_source_language() -> None:
+    translation = PageTranslation.model_validate(
+        {
+            "regions": [
+                {
+                    "box_2d": [100, 200, 400, 800],
+                    "source_language": "zh-Hant",
+                    "source_text": "你好",
+                    "translated_text": "Halo",
+                }
+            ]
+        }
+    )
+
+    assert translation.regions[0].source_language == "zh-Hant"
+
+    with pytest.raises(ValidationError):
+        PageTranslation.model_validate(
+            {
+                "regions": [
+                    {
+                        "box_2d": [100, 200, 400, 800],
+                        "source_language": "Traditional Chinese",
+                        "source_text": "你好",
+                        "translated_text": "Halo",
+                    }
+                ]
+            }
+        )
 
 
 def test_page_translation_rejects_invalid_placement_coordinates() -> None:
@@ -113,7 +146,8 @@ def test_gemini_translator_sends_bounded_structured_request(tmp_path: Path) -> N
                         "box_2d": [100, 200, 400, 800],
                         "placement_box_2d": [80, 150, 450, 850],
                         "region_type": "dialogue",
-                        "source_text": "こんにちは",
+                        "source_language": "ko",
+                        "source_text": "안녕하세요",
                         "translated_text": "Halo",
                     }
                 ]
@@ -134,6 +168,7 @@ def test_gemini_translator_sends_bounded_structured_request(tmp_path: Path) -> N
     assert result.regions[0].translated_text == "Halo"
     assert result.regions[0].placement_box_2d == (80, 150, 450, 850)
     assert result.regions[0].region_type == "dialogue"
+    assert result.regions[0].source_language == "ko"
     request = captured["request"]
     assert isinstance(request, Request)
     assert request.full_url.endswith(
@@ -170,10 +205,12 @@ def test_gemini_translator_sends_bounded_structured_request(tmp_path: Path) -> N
         "type": "string",
         "enum": ["dialogue", "caption", "sfx", "title"],
     }
+    assert region_properties["source_language"] == {"type": "string"}
     assert regions_schema["items"]["required"] == [
         "box_2d",
         "placement_box_2d",
         "region_type",
+        "source_language",
         "source_text",
         "translated_text",
     ]
@@ -181,9 +218,11 @@ def test_gemini_translator_sends_bounded_structured_request(tmp_path: Path) -> N
         "image/png"
     )
     prompt = payload["contents"][0]["parts"][1]["text"]
-    assert "detect every visible source-language string" in prompt
-    assert "Simplified or Traditional Chinese" in prompt
-    assert "Chinese for dialogue and Japanese for sound effects" in prompt
+    assert "assume no fixed source language" in prompt
+    assert "overlapping vertical tile" in prompt
+    assert "relative only to the supplied image" in prompt
+    assert "any natural language or writing system" in prompt
+    assert "mix several languages or scripts" in prompt
     assert "all sound effects or onomatopoeia" in prompt
     assert "glyph, outline, shadow, and punctuation mark" in prompt
     assert "same speech balloon into one dialogue region" in prompt
@@ -191,14 +230,144 @@ def test_gemini_translator_sends_bounded_structured_request(tmp_path: Path) -> N
     assert "should normally be larger than box_2d" in prompt
     assert "other placement boxes" in prompt
     assert "concise, natural Indonesian" in prompt
+    assert "source_language" in prompt
+    assert "valid BCP 47 language tag" in prompt
+    assert "target language is always Indonesian (id)" in prompt
     assert "horizontal Indonesian typesetting" in prompt
     assert "Proofread Indonesian spelling" in prompt
-    assert "Never leave Japanese or other CJK characters" in prompt
+    assert "Do not copy untranslated source-language prose" in prompt
     assert "do not wrap sound effects in asterisks" in prompt
     assert "inventory every speech balloon and caption box" in prompt
     assert "never return only sound effects" in prompt
     assert captured["timeout"] == 30
     assert captured["max_response_bytes"] == 100_000
+
+
+def test_gemini_translator_tiles_long_webtoon_and_maps_coordinates(
+    tmp_path: Path,
+) -> None:
+    page_path = tmp_path / "page.png"
+    Image.new("RGB", (200, 1_000), "white").save(page_path, format="PNG")
+    tile_sizes: list[tuple[int, int]] = []
+
+    def transport(request: Request, _timeout: float, _limit: int) -> bytes:
+        payload = json.loads(request.data or b"{}")
+        encoded = payload["contents"][0]["parts"][0]["inline_data"]["data"]
+        with Image.open(BytesIO(base64.b64decode(encoded))) as tile:
+            tile_sizes.append(tile.size)
+        index = len(tile_sizes)
+        return gemini_response(
+            {
+                "regions": [
+                    {
+                        "box_2d": [250, 100, 500, 900],
+                        "placement_box_2d": [200, 50, 550, 950],
+                        "region_type": "dialogue",
+                        "source_language": "es",
+                        "source_text": f"Texto {index}",
+                        "translated_text": f"Teks {index}",
+                    }
+                ]
+            }
+        )
+
+    translator = GeminiPageTranslator(
+        api_key="test-key",
+        min_request_interval_seconds=0,
+        max_tile_aspect_ratio=2.0,
+        tile_overlap_ratio=0.1,
+        transport=transport,
+    )
+
+    result = translator.translate_page(page_path)
+
+    assert tile_sizes == [(200, 400), (200, 400), (200, 400)]
+    assert [region.box_2d for region in result.regions] == [
+        (100, 100, 200, 900),
+        (460, 100, 560, 900),
+        (700, 100, 800, 900),
+    ]
+    assert [region.source_text for region in result.regions] == [
+        "Texto 1",
+        "Texto 2",
+        "Texto 3",
+    ]
+
+
+def test_gemini_translator_deduplicates_regions_from_tile_overlap(
+    tmp_path: Path,
+) -> None:
+    page_path = tmp_path / "page.png"
+    Image.new("RGB", (200, 1_000), "white").save(page_path, format="PNG")
+    responses = iter(
+        [
+            {
+                "regions": [
+                    {
+                        "box_2d": [850, 100, 950, 900],
+                        "placement_box_2d": [820, 50, 980, 950],
+                        "region_type": "dialogue",
+                        "source_language": "es",
+                        "source_text": "Texto repetido",
+                        "translated_text": "Teks berulang",
+                    }
+                ]
+            },
+            {
+                "regions": [
+                    {
+                        "box_2d": [0, 100, 100, 900],
+                        "placement_box_2d": [0, 50, 130, 950],
+                        "region_type": "dialogue",
+                        "source_language": "es",
+                        "source_text": "Texto repetido",
+                        "translated_text": "Teks berulang",
+                    }
+                ]
+            },
+            {"regions": []},
+        ]
+    )
+    translator = GeminiPageTranslator(
+        api_key="test-key",
+        min_request_interval_seconds=0,
+        max_tile_aspect_ratio=2.0,
+        tile_overlap_ratio=0.1,
+        transport=lambda _request, _timeout, _limit: gemini_response(
+            next(responses)
+        ),
+    )
+
+    result = translator.translate_page(page_path)
+
+    assert len(result.regions) == 1
+    assert result.regions[0].source_text == "Texto repetido"
+
+
+def test_gemini_translator_requires_detected_source_language(
+    tmp_path: Path,
+) -> None:
+    page_path = tmp_path / "page.png"
+    make_page(page_path)
+    translator = GeminiPageTranslator(
+        api_key="test-key",
+        transport=lambda _request, _timeout, _limit: gemini_response(
+            {
+                "regions": [
+                    {
+                        "box_2d": [100, 200, 400, 800],
+                        "placement_box_2d": [80, 150, 450, 850],
+                        "region_type": "dialogue",
+                        "source_text": "Hello",
+                        "translated_text": "Halo",
+                    }
+                ]
+            }
+        ),
+    )
+
+    with pytest.raises(GeminiTranslationError, match="invalid"):
+        translator.translate_page(page_path)
 
 
 def test_gemini_http_error_logs_status_without_secrets(
