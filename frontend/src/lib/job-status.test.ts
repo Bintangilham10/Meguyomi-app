@@ -86,6 +86,22 @@ test("getJobStatusPresentation explains unsafe translation layout", () => {
 });
 
 
+test("getJobStatusPresentation distinguishes final layout failure reasons", () => {
+  const cases = [
+    ["RESULT_PLACEMENT_OVERLAP", /bertumpuk/i],
+    ["RESULT_SOURCE_MASK_FAILED", /dihapus dengan aman/i],
+    ["RESULT_TEXT_FIT_FAILED", /tanpa menutup gambar/i],
+  ] as const;
+
+  for (const [failureCode, detailPattern] of cases) {
+    const presentation = getJobStatusPresentation("FAILED", failureCode);
+
+    assert.match(presentation.detail, detailPattern);
+    assert.equal(presentation.tone, "danger");
+  }
+});
+
+
 test("getJobStatusPresentation explains every automatic wait reason", () => {
   assert.match(
     getJobStatusPresentation(
