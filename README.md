@@ -75,6 +75,10 @@ aktif ketika worker terjemahan sedang memproses bab panjang.
    halaman, menempatkan terjemahan Indonesia, dan menyusun PDF hasil. Halaman
    webtoon yang sangat panjang otomatis dibagi menjadi tile vertikal yang saling
    overlap, lalu koordinatnya dipetakan kembali dan blok duplikat digabungkan.
+   Jika koordinat hasil pertama tidak aman untuk dirender, halaman tersebut
+   dipindai ulang satu kali dengan instruksi koreksi yang sesuai tanpa mengulang
+   checkpoint halaman sebelumnya. Kegagalan akhir membedakan overlap area,
+   teks yang tidak muat, dan masking teks sumber yang tidak aman.
    Worker memproses satu job pada satu waktu, memberi jeda
    antar-request, dan mencoba ulang satu kali error Gemini yang sangat singkat.
    HTTP 429, HTTP 5xx, timeout, dan gangguan koneksi yang lebih lama dipindahkan
