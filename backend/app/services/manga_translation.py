@@ -26,6 +26,28 @@ LANGUAGE_TAG_PATTERN = re.compile(
 )
 MAX_REGIONS_PER_TILE = 80
 MAX_REGIONS_PER_PAGE = 400
+_QUALITY_RESCAN_INSTRUCTIONS = {
+    "placement_overlap": (
+        "The previous page scan produced placement boxes that overlapped too "
+        "heavily. Re-detect each distinct text block independently, combine all "
+        "text from the same balloon into one region, and keep every non-SFX "
+        "placement box disjoint from the others."
+    ),
+    "text_does_not_fit": (
+        "The previous page scan produced Indonesian text that could not fit its "
+        "declared safe area. Use the full writable interior for placement_box_2d "
+        "and make translated_text as concise and natural as the meaning allows."
+    ),
+    "source_mask_failure": (
+        "The previous page scan did not bound the source glyphs accurately enough "
+        "for safe removal. Re-detect tight box_2d coordinates around every glyph, "
+        "outline, shadow, and punctuation mark without including unrelated art."
+    ),
+    "unsafe_layout": (
+        "The previous page scan could not be typeset safely. Recheck every source "
+        "and placement coordinate carefully and return a fresh corrected layout."
+    ),
+}
 Coordinate = Annotated[int, Field(ge=0, le=1000)]
 RegionType = Literal["dialogue", "caption", "sfx", "title"]
 GeminiTransport = Callable[[Request, float, int], bytes]
@@ -483,7 +505,12 @@ class GeminiPageTranslator:
         self.jitter = jitter
         self._last_request_started_at: float | None = None
 
-    def translate_page(self, page_path: Path) -> PageTranslation:
+    def translate_page(
+        self,
+        page_path: Path,
+        *,
+        quality_reason: str | None = None,
+    ) -> PageTranslation:
         image = self._read_page_image(page_path)
         try:
             spans = _tile_spans(
@@ -508,7 +535,8 @@ class GeminiPageTranslator:
                 tile = image.crop((0, tile_top, image.width, tile_bottom))
                 try:
                     translation = self._translate_image(
-                        self._encode_image(tile)
+                        self._encode_image(tile),
+                        quality_reason=quality_reason,
                     )
                 finally:
                     tile.close()
@@ -526,10 +554,20 @@ class GeminiPageTranslator:
         finally:
             image.close()
 
-    def _translate_image(self, image_data: bytes) -> PageTranslation:
+    def _translate_image(
+        self,
+        image_data: bytes,
+        *,
+        quality_reason: str | None = None,
+    ) -> PageTranslation:
         request = Request(
             GEMINI_GENERATE_CONTENT_URL.format(model=self.model),
-            data=json.dumps(self._request_payload(image_data)).encode(),
+            data=json.dumps(
+                self._request_payload(
+                    image_data,
+                    quality_reason=quality_reason,
+                )
+            ).encode(),
             headers={
                 "Content-Type": "application/json",
                 "x-goog-api-key": self.api_key,
@@ -625,7 +663,12 @@ class GeminiPageTranslator:
             raise GeminiTranslationError("Preview image exceeds the Gemini input limit.")
         return image_data
 
-    def _request_payload(self, image_data: bytes) -> dict[str, Any]:
+    def _request_payload(
+        self,
+        image_data: bytes,
+        *,
+        quality_reason: str | None = None,
+    ) -> dict[str, Any]:
         prompt = (
             "You are a multilingual manga localization and typesetting detection "
             "engine. The image "
@@ -693,6 +736,9 @@ class GeminiPageTranslator:
             "returning an empty regions array; it is valid only when no source text "
             "needing Indonesian localization is visible anywhere."
         )
+        correction = _QUALITY_RESCAN_INSTRUCTIONS.get(quality_reason or "")
+        if correction is not None:
+            prompt = f"{prompt} Corrective rescan requirement: {correction}"
         return {
             "contents": [
                 {
