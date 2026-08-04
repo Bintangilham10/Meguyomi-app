@@ -9,7 +9,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from PIL import Image
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
@@ -38,11 +38,27 @@ TRANSLATION_RENDER_VERSION = "6"
 
 
 class PageTranslator(Protocol):
-    def translate_page(self, page_path: Path) -> PageTranslation: ...
+    def translate_page(
+        self,
+        page_path: Path,
+        *,
+        quality_reason: str | None = None,
+    ) -> PageTranslation: ...
 
 
 class TranslationClaimLost(Exception):
     pass
+
+
+_QUALITY_FAILURE_CODES = {
+    "placement_overlap": "RESULT_PLACEMENT_OVERLAP",
+    "source_mask_failure": "RESULT_SOURCE_MASK_FAILED",
+    "text_does_not_fit": "RESULT_TEXT_FIT_FAILED",
+}
+
+
+def quality_failure_code(error: TranslationQualityError) -> str:
+    return _QUALITY_FAILURE_CODES.get(error.reason, "RESULT_QUALITY_FAILED")
 
 
 def utc_now() -> datetime:
@@ -168,8 +184,13 @@ def synchronize_translation_progress(
             .values(
                 translated_page_count=translated_page_count,
                 checkpoint_updated_at=checkpoint_updated_at,
-                translation_retry_attempt=0 if translated_page_count else (
-                    TranslationJob.translation_retry_attempt
+                translation_retry_attempt=case(
+                    (
+                        TranslationJob.translated_page_count
+                        < translated_page_count,
+                        0,
+                    ),
+                    else_=TranslationJob.translation_retry_attempt,
                 ),
                 translation_next_retry_at=None,
                 translation_wait_reason=None,
@@ -797,34 +818,70 @@ def translate_job(
         )
         for page_number in range(len(translated_pages) + 1, job.page_count + 1):
             preview_page = preview_pages[page_number - 1]
-            if not touch_translation_heartbeat(
-                normalized_job_id,
-                session_factory,
-            ):
-                raise TranslationClaimLost
             translation_record = records_directory / f"{preview_page.stem}.json"
-            if checkpoint_record_is_valid(translation_record):
-                translation = PageTranslation.model_validate_json(
-                    translation_record.read_text(encoding="utf-8")
-                )
-            else:
-                translation = translator.translate_page(preview_page)
-                partial_record = (
-                    records_directory / f"{preview_page.stem}.json.part"
-                )
-                partial_record.write_text(
-                    translation.model_dump_json(),
-                    encoding="utf-8",
-                )
-                partial_record.replace(translation_record)
             translated_page = translated_pages_directory / preview_page.name
             partial_page = translated_pages_directory / f"{preview_page.name}.part"
             partial_page.unlink(missing_ok=True)
-            try:
-                render_translated_page(preview_page, partial_page, translation)
-            except TranslationQualityError:
-                translation_record.unlink(missing_ok=True)
-                raise
+            quality_reason: str | None = None
+            for quality_attempt in range(
+                settings.translation_quality_rescan_attempts + 1
+            ):
+                if not touch_translation_heartbeat(
+                    normalized_job_id,
+                    session_factory,
+                ):
+                    raise TranslationClaimLost
+                if (
+                    quality_attempt == 0
+                    and checkpoint_record_is_valid(translation_record)
+                ):
+                    translation = PageTranslation.model_validate_json(
+                        translation_record.read_text(encoding="utf-8")
+                    )
+                else:
+                    translation = translator.translate_page(
+                        preview_page,
+                        quality_reason=quality_reason,
+                    )
+                    partial_record = (
+                        records_directory / f"{preview_page.stem}.json.part"
+                    )
+                    partial_record.write_text(
+                        translation.model_dump_json(),
+                        encoding="utf-8",
+                    )
+                    partial_record.replace(translation_record)
+                try:
+                    render_translated_page(
+                        preview_page,
+                        partial_page,
+                        translation,
+                    )
+                except TranslationQualityError as error:
+                    translation_record.unlink(missing_ok=True)
+                    partial_page.unlink(missing_ok=True)
+                    will_rescan = (
+                        quality_attempt
+                        < settings.translation_quality_rescan_attempts
+                    )
+                    logger.warning(
+                        json.dumps(
+                            {
+                                "event": "translation_layout_rejected",
+                                "jobId": normalized_job_id,
+                                "pageNumber": page_number,
+                                "qualityAttempt": quality_attempt + 1,
+                                "qualityReason": error.reason,
+                                "qualityDetails": error.details,
+                                "willRescan": will_rescan,
+                            }
+                        )
+                    )
+                    if not will_rescan:
+                        raise
+                    quality_reason = error.reason
+                    continue
+                break
             partial_page.replace(translated_page)
             translated_pages.append(translated_page)
             if not record_translation_progress(
@@ -875,8 +932,8 @@ def translate_job(
             session_factory,
             settings,
         )
-    except TranslationQualityError:
-        failure_code = "RESULT_QUALITY_FAILED"
+    except TranslationQualityError as error:
+        failure_code = quality_failure_code(error)
     except ResultBuildError:
         failure_code = "RESULT_BUILD_FAILED"
     except Exception:
