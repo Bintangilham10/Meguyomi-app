@@ -13,6 +13,7 @@ from app.services.translated_pdf import (
     _placement_candidates,
     _source_text_mask,
     ResultBuildError,
+    TranslationQualityError,
     build_result_pdf,
     render_translated_page,
 )
@@ -83,9 +84,12 @@ def test_render_translated_page_rejects_text_that_cannot_fit(
         }
     )
 
-    with pytest.raises(ResultBuildError):
+    with pytest.raises(TranslationQualityError) as caught:
         render_translated_page(source, destination, translation)
 
+    assert caught.value.reason == "text_does_not_fit"
+    assert caught.value.details["regionIndex"] == 0
+    assert caught.value.details["regionType"] == "dialogue"
     assert not destination.exists()
 
 
@@ -276,9 +280,16 @@ def test_render_translated_page_rejects_heavily_overlapping_regions(
         }
     )
 
-    with pytest.raises(ResultBuildError, match="overlap too heavily"):
+    with pytest.raises(
+        TranslationQualityError,
+        match="overlap too heavily",
+    ) as caught:
         render_translated_page(source, destination, translation)
 
+    assert caught.value.reason == "placement_overlap"
+    assert caught.value.details["firstRegionIndex"] == 0
+    assert caught.value.details["secondRegionIndex"] == 1
+    assert caught.value.details["overlapRatio"] == 1.0
     assert not destination.exists()
 
 
@@ -302,9 +313,18 @@ def test_render_translated_page_rejects_mass_mask_failure(
         )
     translation = PageTranslation.model_validate({"regions": regions})
 
-    with pytest.raises(ResultBuildError, match="masking failed"):
+    with pytest.raises(
+        TranslationQualityError,
+        match="masking failed",
+    ) as caught:
         render_translated_page(source, destination, translation)
 
+    assert caught.value.reason == "source_mask_failure"
+    assert caught.value.details == {
+        "attempts": 8,
+        "failures": 8,
+        "failureRatio": 1.0,
+    }
     assert not destination.exists()
 
 
