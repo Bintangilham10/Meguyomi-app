@@ -243,6 +243,34 @@ def test_gemini_translator_sends_bounded_structured_request(tmp_path: Path) -> N
     assert captured["max_response_bytes"] == 100_000
 
 
+def test_gemini_translator_adds_reason_specific_corrective_rescan(
+    tmp_path: Path,
+) -> None:
+    page_path = tmp_path / "page.png"
+    make_page(page_path)
+    captured: dict[str, Request] = {}
+
+    def transport(request: Request, _timeout: float, _limit: int) -> bytes:
+        captured["request"] = request
+        return gemini_response({"regions": []})
+
+    translator = GeminiPageTranslator(
+        api_key="test-key",
+        min_request_interval_seconds=0,
+        transport=transport,
+    )
+
+    translator.translate_page(
+        page_path,
+        quality_reason="placement_overlap",
+    )
+
+    payload = json.loads(captured["request"].data or b"{}")
+    prompt = payload["contents"][0]["parts"][1]["text"]
+    assert "Corrective rescan requirement" in prompt
+    assert "keep every non-SFX placement box disjoint" in prompt
+
+
 def test_gemini_translator_tiles_long_webtoon_and_maps_coordinates(
     tmp_path: Path,
 ) -> None:
