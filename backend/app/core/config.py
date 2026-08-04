@@ -129,6 +129,11 @@ class Settings(BaseSettings):
         ge=1,
         le=365,
     )
+    translation_quality_rescan_attempts: int = Field(
+        default=1,
+        ge=0,
+        le=2,
+    )
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
