@@ -64,6 +64,27 @@ const presentations: Record<TranslationJobStatus, JobStatusPresentation> = {
   },
 };
 
+const qualityFailurePresentations: Record<string, JobStatusPresentation> = {
+  RESULT_PLACEMENT_OVERLAP: {
+    label: "Area teks saling bertumpuk",
+    detail:
+      "Pemindaian korektif masih menghasilkan area teks yang bertumpuk. Coba lagi untuk memindai ulang halaman ini.",
+    tone: "danger",
+  },
+  RESULT_SOURCE_MASK_FAILED: {
+    label: "Teks sumber belum dapat dibersihkan",
+    detail:
+      "Batas teks sumber belum cukup akurat untuk dihapus dengan aman. Coba lagi untuk memindai ulang halaman ini.",
+    tone: "danger",
+  },
+  RESULT_TEXT_FIT_FAILED: {
+    label: "Teks belum muat dengan aman",
+    detail:
+      "Terjemahan tidak dapat dimuat di area balon atau panel tanpa menutup gambar. Coba lagi untuk memindai ulang halaman ini.",
+    tone: "danger",
+  },
+};
+
 
 export function getJobStatusPresentation(
   status: TranslationJobStatus,
@@ -135,6 +156,12 @@ export function getJobStatusPresentation(
       detail: "Koneksi ke layanan AI belum berhasil. Coba lagi nanti.",
       tone: "danger",
     };
+  }
+  if (status === "FAILED" && failureCode) {
+    const qualityPresentation = qualityFailurePresentations[failureCode];
+    if (qualityPresentation) {
+      return qualityPresentation;
+    }
   }
   if (
     status === "FAILED" &&
