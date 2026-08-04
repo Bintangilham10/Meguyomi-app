@@ -30,9 +30,16 @@ from app.tasks.translation import (
 class FakeTranslator:
     def __init__(self) -> None:
         self.pages: list[str] = []
+        self.quality_reasons: list[str | None] = []
 
-    def translate_page(self, page_path: Path) -> PageTranslation:
+    def translate_page(
+        self,
+        page_path: Path,
+        *,
+        quality_reason: str | None = None,
+    ) -> PageTranslation:
         self.pages.append(page_path.name)
+        self.quality_reasons.append(quality_reason)
         return PageTranslation(regions=[])
 
 
@@ -51,7 +58,12 @@ class FailingTranslator:
         self.retry_after_seconds = retry_after_seconds
         self.pages: list[str] = []
 
-    def translate_page(self, page_path: Path) -> PageTranslation:
+    def translate_page(
+        self,
+        page_path: Path,
+        *,
+        quality_reason: str | None = None,
+    ) -> PageTranslation:
         self.pages.append(page_path.name)
         if page_path.name == self.fail_on_page:
             raise GeminiTranslationError(
@@ -164,8 +176,16 @@ def test_translate_job_stop_builds_partial_pdf_and_keeps_checkpoint(
     job_id = add_translation_job(session_factory, tmp_path, page_count=3)
 
     class StopOnSecondPageTranslator(FakeTranslator):
-        def translate_page(self, page_path: Path) -> PageTranslation:
-            translation = super().translate_page(page_path)
+        def translate_page(
+            self,
+            page_path: Path,
+            *,
+            quality_reason: str | None = None,
+        ) -> PageTranslation:
+            translation = super().translate_page(
+                page_path,
+                quality_reason=quality_reason,
+            )
             if page_path.name == "page-0002.png":
                 with session_factory() as session:
                     job = session.get(TranslationJob, job_id)
@@ -570,6 +590,43 @@ def test_successful_page_resets_deferred_retry_attempt(tmp_path: Path) -> None:
     engine.dispose()
 
 
+def test_checkpoint_sync_only_resets_retry_after_new_progress(
+    tmp_path: Path,
+) -> None:
+    engine, session_factory = make_session_factory()
+    job_id = add_translation_job(session_factory, tmp_path, page_count=3)
+    with session_factory() as session:
+        job = session.get(TranslationJob, job_id)
+        assert job is not None
+        job.status = JobStatus.TRANSLATING
+        job.translated_page_count = 1
+        job.translation_retry_attempt = 2
+        session.commit()
+
+    assert translation_module.synchronize_translation_progress(
+        job_id,
+        session_factory,
+        1,
+        datetime.now(timezone.utc),
+    )
+    with session_factory() as session:
+        job = session.get(TranslationJob, job_id)
+        assert job is not None
+        assert job.translation_retry_attempt == 2
+
+    assert translation_module.synchronize_translation_progress(
+        job_id,
+        session_factory,
+        2,
+        datetime.now(timezone.utc),
+    )
+    with session_factory() as session:
+        job = session.get(TranslationJob, job_id)
+        assert job is not None
+        assert job.translation_retry_attempt == 0
+    engine.dispose()
+
+
 def test_translate_job_recovers_checkpoint_written_before_database_progress(
     tmp_path: Path,
 ) -> None:
@@ -750,7 +807,10 @@ def test_translate_job_discards_unsafe_layout_record_before_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     engine, session_factory = make_session_factory()
-    settings = Settings(storage_root=tmp_path)
+    settings = Settings(
+        storage_root=tmp_path,
+        translation_quality_rescan_attempts=0,
+    )
     job_id = add_translation_job(session_factory, tmp_path, page_count=1)
     with session_factory() as session:
         job = session.get(TranslationJob, job_id)
@@ -805,6 +865,107 @@ def test_translate_job_discards_unsafe_layout_record_before_retry(
 
     assert retry_result == JobStatus.COMPLETED
     assert retry_translator.pages == ["page-0001.png"]
+    engine.dispose()
+
+
+def test_translate_job_correctively_rescans_rejected_page_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine, session_factory = make_session_factory()
+    settings = Settings(
+        storage_root=tmp_path,
+        translation_quality_rescan_attempts=1,
+    )
+    job_id = add_translation_job(session_factory, tmp_path, page_count=1)
+    real_render_translated_page = translation_module.render_translated_page
+    render_attempts = 0
+
+    def reject_first_layout(source, destination, translation) -> None:
+        nonlocal render_attempts
+        render_attempts += 1
+        if render_attempts == 1:
+            raise TranslationQualityError(
+                "forced overlap",
+                reason="placement_overlap",
+                details={"overlapRatio": 0.91},
+            )
+        real_render_translated_page(source, destination, translation)
+
+    monkeypatch.setattr(
+        translation_module,
+        "render_translated_page",
+        reject_first_layout,
+    )
+    translator = FakeTranslator()
+
+    result = translate_job(
+        job_id,
+        session_factory,
+        settings,
+        translator,
+    )
+
+    assert result == JobStatus.COMPLETED
+    assert render_attempts == 2
+    assert translator.pages == ["page-0001.png", "page-0001.png"]
+    assert translator.quality_reasons == [None, "placement_overlap"]
+    record = tmp_path / "translations" / job_id / "page-0001.json"
+    assert record.is_file()
+    with session_factory() as session:
+        job = session.get(TranslationJob, job_id)
+        assert job is not None
+        assert job.status == JobStatus.COMPLETED
+        assert job.failure_code is None
+        assert job.translated_page_count == 1
+    engine.dispose()
+
+
+def test_translate_job_reports_specific_quality_failure_after_rescan_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine, session_factory = make_session_factory()
+    settings = Settings(
+        storage_root=tmp_path,
+        translation_quality_rescan_attempts=1,
+    )
+    job_id = add_translation_job(session_factory, tmp_path, page_count=1)
+    with session_factory() as session:
+        job = session.get(TranslationJob, job_id)
+        assert job is not None
+        job.prepared_at = datetime.now(timezone.utc)
+        session.commit()
+
+    def reject_text_fit(_source, _destination, _translation) -> None:
+        raise TranslationQualityError(
+            "forced text fit failure",
+            reason="text_does_not_fit",
+            details={"regionIndex": 2},
+        )
+
+    monkeypatch.setattr(
+        translation_module,
+        "render_translated_page",
+        reject_text_fit,
+    )
+    translator = FakeTranslator()
+
+    result = translate_job(
+        job_id,
+        session_factory,
+        settings,
+        translator,
+    )
+
+    assert result == JobStatus.FAILED
+    assert translator.pages == ["page-0001.png", "page-0001.png"]
+    assert translator.quality_reasons == [None, "text_does_not_fit"]
+    with session_factory() as session:
+        job = session.get(TranslationJob, job_id)
+        assert job is not None
+        assert job.failure_code == "RESULT_TEXT_FIT_FAILED"
+        assert job.can_retry_translation
     engine.dispose()
 
 
