@@ -24,7 +24,16 @@ class ResultBuildError(Exception):
 
 
 class TranslationQualityError(ResultBuildError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str = "unsafe_layout",
+        details: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.details = dict(details or {})
 
 
 _FONT_PATH = (
@@ -626,20 +635,29 @@ def _validate_region_placements(
     height: int,
 ) -> None:
     boxes = [
-        _placement_pixel_box(region, width, height)
-        for region in regions
+        (index, _placement_pixel_box(region, width, height))
+        for index, region in enumerate(regions)
         if (region.region_type or "dialogue") != "sfx"
     ]
-    for index, first in enumerate(boxes):
+    for offset, (first_index, first) in enumerate(boxes):
         first_area = max(1, _box_area(first))
-        for second in boxes[index + 1 :]:
+        for second_index, second in boxes[offset + 1 :]:
             overlap = _intersection_area(first, second)
             if overlap <= 0:
                 continue
             smaller_area = min(first_area, max(1, _box_area(second)))
-            if overlap / smaller_area > _MAX_PLACEMENT_OVERLAP_RATIO:
+            overlap_ratio = overlap / smaller_area
+            if overlap_ratio > _MAX_PLACEMENT_OVERLAP_RATIO:
                 raise TranslationQualityError(
-                    "Translated text regions overlap too heavily."
+                    "Translated text regions overlap too heavily.",
+                    reason="placement_overlap",
+                    details={
+                        "firstRegionIndex": first_index,
+                        "secondRegionIndex": second_index,
+                        "firstPlacementBox": list(first),
+                        "secondPlacementBox": list(second),
+                        "overlapRatio": round(overlap_ratio, 4),
+                    },
                 )
 
 
@@ -650,7 +668,13 @@ def _validate_mask_quality(attempts: int, failures: int) -> None:
         and failures / attempts > _MAX_MASK_FAILURE_RATIO
     ):
         raise TranslationQualityError(
-            "Source text masking failed for too many regions."
+            "Source text masking failed for too many regions.",
+            reason="source_mask_failure",
+            details={
+                "attempts": attempts,
+                "failures": failures,
+                "failureRatio": round(failures / attempts, 4),
+            },
         )
 
 
@@ -844,7 +868,13 @@ def _choose_region_layout(
             continue
         return candidate, font, wrapped, bounds, spacing
     raise TranslationQualityError(
-        "Translated text does not fit inside its safe region."
+        "Translated text does not fit inside its safe region.",
+        reason="text_does_not_fit",
+        details={
+            "regionType": region_type,
+            "placementBox": list(base_box),
+            "translatedTextLength": len(display_text),
+        },
     )
 
 
@@ -1090,6 +1120,25 @@ def render_translated_page(
                             other_boxes,
                         )
                     )
+                except TranslationQualityError as error:
+                    if (region.region_type or "dialogue") != "sfx":
+                        raise TranslationQualityError(
+                            str(error),
+                            reason=error.reason,
+                            details={
+                                **error.details,
+                                "regionIndex": index,
+                            },
+                        ) from error
+                    logger.info(
+                        json.dumps(
+                            {
+                                "event": "translated_sfx_skipped",
+                                "reason": error.reason,
+                            }
+                        )
+                    )
+                    continue
                 except ResultBuildError:
                     if (region.region_type or "dialogue") != "sfx":
                         raise
@@ -1097,7 +1146,7 @@ def render_translated_page(
                         json.dumps(
                             {
                                 "event": "translated_sfx_skipped",
-                                "reason": "text_does_not_fit",
+                                "reason": "result_build_failed",
                             }
                         )
                     )
