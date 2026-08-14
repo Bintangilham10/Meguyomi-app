@@ -43,6 +43,7 @@ class PageTranslator(Protocol):
         page_path: Path,
         *,
         quality_reason: str | None = None,
+        tile_cache_directory: Path | None = None,
     ) -> PageTranslation: ...
 
 
@@ -819,6 +820,9 @@ def translate_job(
         for page_number in range(len(translated_pages) + 1, job.page_count + 1):
             preview_page = preview_pages[page_number - 1]
             translation_record = records_directory / f"{preview_page.stem}.json"
+            tile_cache_directory = records_directory / (
+                f"{preview_page.stem}.tiles"
+            )
             translated_page = translated_pages_directory / preview_page.name
             partial_page = translated_pages_directory / f"{preview_page.name}.part"
             partial_page.unlink(missing_ok=True)
@@ -842,6 +846,7 @@ def translate_job(
                     translation = translator.translate_page(
                         preview_page,
                         quality_reason=quality_reason,
+                        tile_cache_directory=tile_cache_directory,
                     )
                     partial_record = (
                         records_directory / f"{preview_page.stem}.json.part"
@@ -882,6 +887,7 @@ def translate_job(
                     quality_reason = error.reason
                     continue
                 break
+            rmtree(tile_cache_directory, ignore_errors=True)
             partial_page.replace(translated_page)
             translated_pages.append(translated_page)
             if not record_translation_progress(
