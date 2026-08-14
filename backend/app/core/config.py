@@ -51,7 +51,7 @@ class Settings(BaseSettings):
         le=4.0,
     )
     gemini_tile_overlap_ratio: float = Field(
-        default=0.12,
+        default=0.2,
         ge=0.05,
         le=0.4,
     )
