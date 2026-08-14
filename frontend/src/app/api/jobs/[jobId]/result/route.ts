@@ -35,7 +35,7 @@ export async function GET(
   try {
     const mode = new URL(request.url).searchParams.get("mode");
     const resultUrl = new URL(`${getApiUrl()}/jobs/${jobId}/result`);
-    if (mode === "print") {
+    if (mode === "print" || mode === "preview") {
       resultUrl.searchParams.set("disposition", "inline");
     }
     const response = await fetch(resultUrl, {
