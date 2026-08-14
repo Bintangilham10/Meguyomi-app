@@ -26,6 +26,8 @@ LANGUAGE_TAG_PATTERN = re.compile(
 )
 MAX_REGIONS_PER_TILE = 80
 MAX_REGIONS_PER_PAGE = 400
+TILE_CACHE_VERSION = "1"
+INTERNAL_TILE_EDGE_GUARD = 8
 _QUALITY_RESCAN_INSTRUCTIONS = {
     "placement_overlap": (
         "The previous page scan produced placement boxes that overlapped too "
@@ -324,6 +326,15 @@ def _map_tile_translation(
 ) -> list[_MappedRegion]:
     mapped: list[_MappedRegion] = []
     for region in translation.regions:
+        local_ymin, _, local_ymax, _ = region.box_2d
+        if (
+            tile_top > 0
+            and local_ymin <= INTERNAL_TILE_EDGE_GUARD
+        ) or (
+            tile_bottom < page_height
+            and local_ymax >= 1000 - INTERNAL_TILE_EDGE_GUARD
+        ):
+            continue
         box = _map_tile_box(
             region.box_2d,
             tile_top=tile_top,
@@ -340,7 +351,6 @@ def _map_tile_translation(
             if region.placement_box_2d is not None
             else None
         )
-        local_ymin, _, local_ymax, _ = region.box_2d
         upper_clearance = 1000 if tile_top == 0 else local_ymin
         lower_clearance = (
             1000 if tile_bottom == page_height else 1000 - local_ymax
@@ -443,6 +453,119 @@ def _merge_tile_regions(candidates: list[_MappedRegion]) -> PageTranslation:
     return PageTranslation(regions=[item.region for item in merged])
 
 
+def _tile_cache_manifest(
+    page_path: Path,
+    image: Image.Image,
+    spans: list[tuple[int, int]],
+    *,
+    model: str,
+    max_tile_aspect_ratio: float,
+    tile_overlap_ratio: float,
+    quality_reason: str | None,
+) -> dict[str, Any]:
+    stat = page_path.stat()
+    return {
+        "version": TILE_CACHE_VERSION,
+        "model": model,
+        "pageWidth": image.width,
+        "pageHeight": image.height,
+        "pageBytes": stat.st_size,
+        "pageMtimeNs": stat.st_mtime_ns,
+        "maxTileAspectRatio": max_tile_aspect_ratio,
+        "tileOverlapRatio": tile_overlap_ratio,
+        "qualityReason": quality_reason,
+        "spans": [list(span) for span in spans],
+    }
+
+
+def _prepare_tile_cache(
+    cache_directory: Path,
+    manifest: dict[str, Any],
+) -> bool:
+    manifest_path = cache_directory / "manifest.json"
+    cached_manifest: Any = None
+    try:
+        if manifest_path.is_file():
+            cached_manifest = json.loads(
+                manifest_path.read_text(encoding="utf-8")
+            )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        cached_manifest = None
+    if cached_manifest == manifest:
+        return True
+    try:
+        if cache_directory.is_symlink():
+            return False
+        cache_directory.mkdir(parents=True, exist_ok=True)
+        for pattern in (
+            "manifest.json",
+            "manifest.json.part",
+            "tile-*.json",
+            "tile-*.json.part",
+        ):
+            for stale_path in cache_directory.glob(pattern):
+                if stale_path.is_file() or stale_path.is_symlink():
+                    stale_path.unlink(missing_ok=True)
+        partial_manifest = cache_directory / "manifest.json.part"
+        partial_manifest.write_text(
+            json.dumps(manifest, separators=(",", ":"), sort_keys=True),
+            encoding="utf-8",
+        )
+        partial_manifest.replace(manifest_path)
+        return True
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        logger.warning(
+            json.dumps(
+                {
+                    "event": "gemini_tile_cache_unavailable",
+                    "cacheDirectory": cache_directory.name,
+                }
+            )
+        )
+        return False
+
+
+def _read_cached_tile(cache_path: Path) -> PageTranslation | None:
+    if not cache_path.is_file():
+        return None
+    try:
+        translation = PageTranslation.model_validate_json(
+            cache_path.read_text(encoding="utf-8")
+        )
+        if len(translation.regions) > MAX_REGIONS_PER_TILE:
+            raise ValueError("Cached tile has too many regions.")
+        return translation
+    except (OSError, ValidationError, ValueError):
+        try:
+            cache_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
+
+
+def _write_cached_tile(cache_path: Path, translation: PageTranslation) -> None:
+    partial_path = cache_path.with_suffix(f"{cache_path.suffix}.part")
+    try:
+        partial_path.write_text(
+            translation.model_dump_json(),
+            encoding="utf-8",
+        )
+        partial_path.replace(cache_path)
+    except OSError:
+        try:
+            partial_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        logger.warning(
+            json.dumps(
+                {
+                    "event": "gemini_tile_cache_write_failed",
+                    "cacheFile": cache_path.name,
+                }
+            )
+        )
+
+
 class GeminiPageTranslator:
     def __init__(
         self,
@@ -459,7 +582,7 @@ class GeminiPageTranslator:
         retry_max_delay_seconds: float = 60.0,
         inline_retry_max_delay_seconds: float = 15.0,
         max_tile_aspect_ratio: float = 2.0,
-        tile_overlap_ratio: float = 0.12,
+        tile_overlap_ratio: float = 0.2,
         transport: GeminiTransport = _read_response,
         clock: Clock = time.monotonic,
         sleeper: Sleeper = time.sleep,
@@ -510,6 +633,7 @@ class GeminiPageTranslator:
         page_path: Path,
         *,
         quality_reason: str | None = None,
+        tile_cache_directory: Path | None = None,
     ) -> PageTranslation:
         image = self._read_page_image(page_path)
         try:
@@ -530,16 +654,54 @@ class GeminiPageTranslator:
                         }
                     )
                 )
-            mapped_regions: list[_MappedRegion] = []
-            for tile_top, tile_bottom in spans:
-                tile = image.crop((0, tile_top, image.width, tile_bottom))
-                try:
-                    translation = self._translate_image(
-                        self._encode_image(tile),
+            cache_enabled = False
+            if len(spans) > 1 and tile_cache_directory is not None:
+                cache_enabled = _prepare_tile_cache(
+                    tile_cache_directory,
+                    _tile_cache_manifest(
+                        page_path,
+                        image,
+                        spans,
+                        model=self.model,
+                        max_tile_aspect_ratio=self.max_tile_aspect_ratio,
+                        tile_overlap_ratio=self.tile_overlap_ratio,
                         quality_reason=quality_reason,
+                    ),
+                )
+            mapped_regions: list[_MappedRegion] = []
+            for tile_index, (tile_top, tile_bottom) in enumerate(spans, start=1):
+                cache_path = (
+                    tile_cache_directory
+                    / f"tile-{tile_index:04d}-{tile_top}-{tile_bottom}.json"
+                    if cache_enabled and tile_cache_directory is not None
+                    else None
+                )
+                translation = (
+                    _read_cached_tile(cache_path)
+                    if cache_path is not None
+                    else None
+                )
+                if translation is None:
+                    tile = image.crop((0, tile_top, image.width, tile_bottom))
+                    try:
+                        translation = self._translate_image(
+                            self._encode_image(tile),
+                            quality_reason=quality_reason,
+                        )
+                    finally:
+                        tile.close()
+                    if cache_path is not None:
+                        _write_cached_tile(cache_path, translation)
+                else:
+                    logger.info(
+                        json.dumps(
+                            {
+                                "event": "gemini_tile_checkpoint_reused",
+                                "tileIndex": tile_index,
+                                "tileCount": len(spans),
+                            }
+                        )
                     )
-                finally:
-                    tile.close()
                 if len(spans) == 1:
                     return translation
                 mapped_regions.extend(
