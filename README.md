@@ -73,8 +73,12 @@ aktif ketika worker terjemahan sedang memproses bab panjang.
 4. Worker mendeteksi bahasa setiap blok teks, memvalidasi JSON kotak teks,
    meminta area penempatan balon/panel yang aman, menampilkan progres per
    halaman, menempatkan terjemahan Indonesia, dan menyusun PDF hasil. Halaman
-   webtoon yang sangat panjang otomatis dibagi menjadi tile vertikal yang saling
-   overlap, lalu koordinatnya dipetakan kembali dan blok duplikat digabungkan.
+   webtoon yang sangat panjang otomatis dibagi menjadi tile vertikal dengan
+   overlap default 20%, lalu koordinatnya dipetakan kembali dan blok duplikat
+   digabungkan. Tile yang sudah berhasil disimpan sebagai checkpoint sementara,
+   sehingga retry melanjutkan dari tile yang gagal tanpa mengulang tile awal.
+   Deteksi yang menyentuh batas internal tile dibuang agar teks terpotong tidak
+   ikut dipasang ke hasil.
    Jika koordinat hasil pertama tidak aman untuk dirender, halaman tersebut
    dipindai ulang satu kali dengan instruksi koreksi yang sesuai tanpa mengulang
    checkpoint halaman sebelumnya. Kegagalan akhir membedakan overlap area,
