@@ -22,11 +22,36 @@ export function JobList({ jobs, pagination, error }: JobListProps) {
   const [startingJobId, setStartingJobId] = useState<string | null>(null);
   const [stoppingJobId, setStoppingJobId] = useState<string | null>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
+  const [previewJobId, setPreviewJobId] = useState<string | null>(null);
+  const [previewAfterStopJobId, setPreviewAfterStopJobId] = useState<
+    string | null
+  >(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const hasActiveJobs = jobs.some((job) => shouldRefreshJobStatus(job.status));
+  const stoppedJobReadyForPreview = previewAfterStopJobId
+    ? jobs.some(
+        (job) =>
+          job.id === previewAfterStopJobId &&
+          job.status === "TRANSLATION_STOPPED" &&
+          job.resultAvailable,
+      )
+    : false;
+  const openPreviewJobId =
+    previewJobId ??
+    (stoppedJobReadyForPreview ? previewAfterStopJobId : null);
+
+  function toggleResultPreview(jobId: string) {
+    const isOpen = openPreviewJobId === jobId;
+    setPreviewAfterStopJobId(null);
+    setPreviewJobId(isOpen ? null : jobId);
+  }
 
   async function startTranslation(jobId: string) {
     setStartingJobId(jobId);
+    setPreviewJobId((current) => (current === jobId ? null : current));
+    setPreviewAfterStopJobId((current) =>
+      current === jobId ? null : current,
+    );
     setActionError(null);
     try {
       const response = await fetch(`/api/jobs/${jobId}/translation`, {
@@ -80,6 +105,8 @@ export function JobList({ jobs, pagination, error }: JobListProps) {
         setActionError("Respons penghentian terjemahan tidak valid.");
         return;
       }
+      setPreviewJobId(null);
+      setPreviewAfterStopJobId(jobId);
       router.refresh();
     } catch {
       setActionError("Layanan penghentian terjemahan sedang tidak tersedia.");
@@ -141,6 +168,10 @@ export function JobList({ jobs, pagination, error }: JobListProps) {
         );
         return;
       }
+      setPreviewJobId((current) => (current === job.id ? null : current));
+      setPreviewAfterStopJobId((current) =>
+        current === job.id ? null : current,
+      );
       router.refresh();
     } catch {
       setActionError("Layanan penghapusan sedang tidak tersedia.");
@@ -195,7 +226,9 @@ export function JobList({ jobs, pagination, error }: JobListProps) {
             isDeleting={deletingJobId === job.id}
             isStarting={startingJobId === job.id}
             isStopping={stoppingJobId === job.id}
+            isPreviewOpen={openPreviewJobId === job.id}
             onDelete={deleteJob}
+            onTogglePreview={toggleResultPreview}
             onStartTranslation={startTranslation}
             onStopTranslation={stopTranslation}
             onRetryPreparation={retryPreparation}
