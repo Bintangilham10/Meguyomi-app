@@ -9,9 +9,11 @@ import type { TranslationJob, TranslationJobStatus } from "@/types/job";
 interface JobListItemProps {
   job: TranslationJob;
   isDeleting: boolean;
+  isPreviewOpen: boolean;
   isStarting: boolean;
   isStopping: boolean;
   onDelete: (job: TranslationJob) => void;
+  onTogglePreview: (jobId: string) => void;
   onStartTranslation: (jobId: string) => void;
   onStopTranslation: (jobId: string) => void;
   onRetryPreparation: (jobId: string) => void;
@@ -54,9 +56,11 @@ function getProgressLabel(status: TranslationJobStatus): string {
 export function JobListItem({
   job,
   isDeleting,
+  isPreviewOpen,
   isStarting,
   isStopping,
   onDelete,
+  onTogglePreview,
   onStartTranslation,
   onStopTranslation,
   onRetryPreparation,
@@ -78,6 +82,9 @@ export function JobListItem({
     presentation.tone === "danger"
       ? "bg-[var(--accent-wash)] text-[var(--danger)]"
       : "bg-[var(--background)] text-[var(--foreground)]";
+  const previewId = `result-preview-${job.id}`;
+  const previewUrl = `/api/jobs/${job.id}/result?mode=preview`;
+  const isPartialResult = job.status === "TRANSLATION_STOPPED";
 
   return (
     <li className="grid gap-5 py-6 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,auto)] lg:items-center">
@@ -123,7 +130,7 @@ export function JobListItem({
           <p className="max-w-sm text-left text-xs leading-5 text-[var(--muted)] lg:text-right">
             {job.status === "TRANSLATION_STOPPED"
               ? job.resultAvailable
-                ? "PDF parsial siap diunduh atau dicetak. Terjemahan dapat dilanjutkan dari checkpoint ini."
+                ? "PDF parsial siap dipreview, diunduh, atau dicetak. Terjemahan dapat dilanjutkan dari checkpoint ini."
                 : job.translatedPageCount > 0
                   ? "PDF parsial belum dapat disusun, tetapi checkpoint tetap aman dan dapat dilanjutkan."
                   : "Belum ada halaman selesai untuk PDF. Terjemahan dapat dilanjutkan dari checkpoint ini."
@@ -177,6 +184,19 @@ export function JobListItem({
           ) : null}
           {job.resultAvailable ? (
             <>
+              <button
+                type="button"
+                aria-controls={previewId}
+                aria-expanded={isPreviewOpen}
+                onClick={() => onTogglePreview(job.id)}
+                className="rounded-[10px] border border-[var(--ink)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-bold transition hover:bg-[var(--ink)] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+              >
+                {isPreviewOpen
+                  ? "Tutup preview"
+                  : isPartialResult
+                    ? "Lihat preview parsial"
+                    : "Lihat preview"}
+              </button>
               <a
                 href={`/api/jobs/${job.id}/result`}
                 className="rounded-[10px] border border-[var(--ink)] bg-[var(--accent)] px-3 py-2 text-xs font-bold text-white transition hover:bg-[var(--accent-strong)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] active:translate-y-px"
@@ -210,6 +230,53 @@ export function JobListItem({
           ) : null}
         </div>
       </div>
+      {job.resultAvailable && isPreviewOpen ? (
+        <section
+          id={previewId}
+          aria-label={`Preview hasil ${job.originalFilename}`}
+          className="overflow-hidden rounded-[14px] border border-[var(--border-strong)] bg-[var(--surface-strong)] lg:col-span-2"
+        >
+          <div className="flex flex-col gap-4 border-b border-[var(--border)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+            <div>
+              <p className="display-face text-xl">
+                {isPartialResult ? "Preview PDF parsial" : "Preview PDF hasil"}
+              </p>
+              <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
+                {isPartialResult
+                  ? `${job.translatedPageCount} dari ${job.pageCount} halaman telah selesai dan tersimpan.`
+                  : `${job.pageCount} halaman hasil terjemahan siap diperiksa.`}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <a
+                href={previewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-[10px] border border-[var(--ink)] px-3 py-2 text-xs font-bold transition hover:bg-[var(--ink)] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+              >
+                Buka di tab baru
+              </a>
+              <button
+                type="button"
+                onClick={() => onTogglePreview(job.id)}
+                className="rounded-[10px] px-3 py-2 text-xs font-bold text-[var(--muted)] transition hover:bg-[var(--background)] hover:text-[var(--foreground)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+          <iframe
+            src={previewUrl}
+            title={`Preview PDF ${job.originalFilename}`}
+            loading="lazy"
+            className="block h-[65svh] min-h-[28rem] w-full bg-white sm:h-[46rem]"
+          />
+          <p className="border-t border-[var(--border)] px-4 py-3 text-xs leading-5 text-[var(--muted)] sm:px-5">
+            Jika PDF tidak tampil di perangkat ini, gunakan tombol Buka di tab
+            baru. File tetap bersifat privat dan tidak disimpan di cache browser.
+          </p>
+        </section>
+      ) : null}
     </li>
   );
 }
