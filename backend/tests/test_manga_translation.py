@@ -372,6 +372,157 @@ def test_gemini_translator_deduplicates_regions_from_tile_overlap(
     assert result.regions[0].source_text == "Texto repetido"
 
 
+def test_gemini_translator_discards_text_cut_by_internal_tile_edge(
+    tmp_path: Path,
+) -> None:
+    page_path = tmp_path / "page.png"
+    Image.new("RGB", (200, 1_000), "white").save(page_path, format="PNG")
+    responses = iter(
+        [
+            {
+                "regions": [
+                    {
+                        "box_2d": [990, 100, 1000, 900],
+                        "placement_box_2d": [970, 50, 1000, 950],
+                        "region_type": "dialogue",
+                        "source_language": "es",
+                        "source_text": "Texto parcial",
+                        "translated_text": "Teks terpotong",
+                    }
+                ]
+            },
+            {
+                "regions": [
+                    {
+                        "box_2d": [100, 100, 200, 900],
+                        "placement_box_2d": [70, 50, 230, 950],
+                        "region_type": "dialogue",
+                        "source_language": "es",
+                        "source_text": "Texto completo",
+                        "translated_text": "Teks lengkap",
+                    }
+                ]
+            },
+            {"regions": []},
+        ]
+    )
+    translator = GeminiPageTranslator(
+        api_key="test-key",
+        min_request_interval_seconds=0,
+        max_tile_aspect_ratio=2.0,
+        tile_overlap_ratio=0.1,
+        transport=lambda _request, _timeout, _limit: gemini_response(
+            next(responses)
+        ),
+    )
+
+    result = translator.translate_page(page_path)
+
+    assert [region.source_text for region in result.regions] == [
+        "Texto completo"
+    ]
+
+
+def test_gemini_translator_resumes_long_page_from_tile_cache(
+    tmp_path: Path,
+) -> None:
+    page_path = tmp_path / "page.png"
+    cache_directory = tmp_path / "page.tiles"
+    Image.new("RGB", (200, 1_000), "white").save(page_path, format="PNG")
+    first_calls = 0
+
+    def interrupted_transport(
+        _request: Request,
+        _timeout: float,
+        _limit: int,
+    ) -> bytes:
+        nonlocal first_calls
+        first_calls += 1
+        if first_calls == 2:
+            raise GeminiTranslationError(
+                "Gemini request failed.",
+                http_status=429,
+                retryable=True,
+            )
+        return gemini_response(
+            {
+                "regions": [
+                    {
+                        "box_2d": [250, 100, 500, 900],
+                        "placement_box_2d": [200, 50, 550, 950],
+                        "region_type": "dialogue",
+                        "source_language": "es",
+                        "source_text": "Texto 1",
+                        "translated_text": "Teks 1",
+                    }
+                ]
+            }
+        )
+
+    interrupted = GeminiPageTranslator(
+        api_key="test-key",
+        min_request_interval_seconds=0,
+        max_retries=0,
+        max_tile_aspect_ratio=2.0,
+        tile_overlap_ratio=0.1,
+        transport=interrupted_transport,
+    )
+
+    with pytest.raises(GeminiTranslationError):
+        interrupted.translate_page(
+            page_path,
+            tile_cache_directory=cache_directory,
+        )
+
+    assert first_calls == 2
+    assert len(list(cache_directory.glob("tile-*.json"))) == 1
+    resumed_calls = 0
+
+    def resumed_transport(
+        _request: Request,
+        _timeout: float,
+        _limit: int,
+    ) -> bytes:
+        nonlocal resumed_calls
+        resumed_calls += 1
+        index = resumed_calls + 1
+        return gemini_response(
+            {
+                "regions": [
+                    {
+                        "box_2d": [250, 100, 500, 900],
+                        "placement_box_2d": [200, 50, 550, 950],
+                        "region_type": "dialogue",
+                        "source_language": "es",
+                        "source_text": f"Texto {index}",
+                        "translated_text": f"Teks {index}",
+                    }
+                ]
+            }
+        )
+
+    resumed = GeminiPageTranslator(
+        api_key="test-key",
+        min_request_interval_seconds=0,
+        max_retries=0,
+        max_tile_aspect_ratio=2.0,
+        tile_overlap_ratio=0.1,
+        transport=resumed_transport,
+    )
+
+    result = resumed.translate_page(
+        page_path,
+        tile_cache_directory=cache_directory,
+    )
+
+    assert resumed_calls == 2
+    assert [region.source_text for region in result.regions] == [
+        "Texto 1",
+        "Texto 2",
+        "Texto 3",
+    ]
+
+
 def test_gemini_translator_requires_detected_source_language(
     tmp_path: Path,
 ) -> None:
