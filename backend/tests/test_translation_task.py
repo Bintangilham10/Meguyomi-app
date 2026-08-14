@@ -31,15 +31,18 @@ class FakeTranslator:
     def __init__(self) -> None:
         self.pages: list[str] = []
         self.quality_reasons: list[str | None] = []
+        self.tile_cache_directories: list[Path | None] = []
 
     def translate_page(
         self,
         page_path: Path,
         *,
         quality_reason: str | None = None,
+        tile_cache_directory: Path | None = None,
     ) -> PageTranslation:
         self.pages.append(page_path.name)
         self.quality_reasons.append(quality_reason)
+        self.tile_cache_directories.append(tile_cache_directory)
         return PageTranslation(regions=[])
 
 
@@ -63,6 +66,7 @@ class FailingTranslator:
         page_path: Path,
         *,
         quality_reason: str | None = None,
+        tile_cache_directory: Path | None = None,
     ) -> PageTranslation:
         self.pages.append(page_path.name)
         if page_path.name == self.fail_on_page:
@@ -147,6 +151,10 @@ def test_translate_job_builds_pdf_and_marks_job_completed(tmp_path: Path) -> Non
 
     assert result == JobStatus.COMPLETED
     assert translator.pages == ["page-0001.png", "page-0002.png"]
+    assert translator.tile_cache_directories == [
+        tmp_path / "translations" / job_id / "page-0001.tiles",
+        tmp_path / "translations" / job_id / "page-0002.tiles",
+    ]
     with session_factory() as session:
         job = session.get(TranslationJob, job_id)
         assert job is not None
@@ -181,10 +189,12 @@ def test_translate_job_stop_builds_partial_pdf_and_keeps_checkpoint(
             page_path: Path,
             *,
             quality_reason: str | None = None,
+            tile_cache_directory: Path | None = None,
         ) -> PageTranslation:
             translation = super().translate_page(
                 page_path,
                 quality_reason=quality_reason,
+                tile_cache_directory=tile_cache_directory,
             )
             if page_path.name == "page-0002.png":
                 with session_factory() as session:
