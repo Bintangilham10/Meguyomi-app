@@ -26,7 +26,7 @@ Pengguna masuk ke workspace privat, mengunggah PDF, menunggu persiapan halaman, 
 
 - Input MVP adalah PDF manga dalam bahasa apa pun dengan batas 50 MB dan 100 halaman.
 - Bahasa sumber dideteksi otomatis per blok sehingga satu halaman dapat memuat beberapa bahasa.
-- Halaman webtoon yang sangat panjang dipindai sebagai tile vertikal overlap lalu koordinatnya digabungkan kembali.
+- Halaman webtoon yang sangat panjang dipindai sebagai tile vertikal overlap, checkpoint berhasil disimpan per tile, lalu koordinatnya digabungkan kembali tanpa memakai deteksi teks yang terpotong di batas internal tile.
 - Output adalah PDF dengan teks berbahasa Indonesia.
 - Hasil dengan koordinat bertabrakan atau kegagalan pembersihan teks yang terlalu tinggi tidak diterbitkan dan dapat dipindai ulang.
 - Pemrosesan berjalan berurutan per halaman.
