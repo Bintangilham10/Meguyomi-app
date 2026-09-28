@@ -138,6 +138,7 @@ def test_upload_accepts_valid_pdf(
     assert body["originalFilename"] == "chapter-01.pdf"
     assert body["sizeBytes"] == len(pdf)
     assert body["pageCount"] == 2
+    assert body["sourceLanguage"] == "ja"
     assert body["status"] == "QUEUED"
     assert body["id"]
     assert body["createdAt"]
@@ -145,6 +146,26 @@ def test_upload_accepts_valid_pdf(
     stored_files = list((tmp_path / "originals").glob("*.pdf"))
     assert len(stored_files) == 1
     assert stored_files[0].name != "chapter-01.pdf"
+
+
+@pytest.mark.parametrize("source_language", ["zh-Hans", "zh-Hant"])
+def test_upload_persists_chinese_source_language(authenticated_client, source_language):
+    response = authenticated_client.post(
+        "/jobs", data={"source_language": source_language},
+        files={"file": ("manhua.pdf", make_pdf(), "application/pdf")},
+    )
+    assert response.status_code == 201
+    assert response.json()["sourceLanguage"] == source_language
+    assert authenticated_client.get("/jobs").json()["data"][0]["sourceLanguage"] == source_language
+
+
+def test_unsupported_upload_language_is_rejected_before_storage(authenticated_client, tmp_path):
+    response = authenticated_client.post(
+        "/jobs", data={"source_language": "en"},
+        files={"file": ("manhua.pdf", make_pdf(), "application/pdf")},
+    )
+    assert response.status_code == 422
+    assert not list(tmp_path.rglob("*.pdf"))
 
 
 @pytest.mark.parametrize(
@@ -416,9 +437,11 @@ def test_list_rejects_pagination_outside_safe_limits(
     assert response.status_code == 422
 
 
+@pytest.mark.parametrize("provider_setting", ["LOCAL_AI_URL", "GEMINI_API_KEY"])
 def test_start_translation_claims_ready_job_once(
     authenticated_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
+    provider_setting: str,
 ) -> None:
     upload_response = authenticated_client.post(
         "/jobs",
@@ -427,7 +450,7 @@ def test_start_translation_claims_ready_job_once(
     job_id = upload_response.json()["id"]
     update_job(job_id, status=JobStatus.READY_FOR_TRANSLATION)
     dispatched_job_ids: list[str] = []
-    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    monkeypatch.setenv(provider_setting, "http://local-ai:8001" if provider_setting == "LOCAL_AI_URL" else "test-gemini-key")
     get_settings.cache_clear()
     monkeypatch.setattr(
         "app.api.jobs.dispatch_translation_job",
