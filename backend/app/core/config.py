@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     preview_render_scale: float = Field(default=2.0, ge=0.5, le=4.0)
     max_preview_pixels: int = 25_000_000
     max_preview_bytes: int = 512 * 1024 * 1024
+    local_ai_url: str = ""
+    local_ai_timeout_seconds: float = Field(default=600, ge=10, le=1800)
+    local_ai_max_image_bytes: int = Field(default=16 * 1024 * 1024, ge=1024, le=16 * 1024 * 1024)
+    local_ai_max_tile_aspect_ratio: float = Field(default=2, ge=1, le=4)
+    local_ai_tile_overlap_ratio: float = Field(default=0.2, ge=0.05, le=0.4)
     gemini_api_key: str = ""
     gemini_model: str = Field(
         default="gemini-3.6-flash",
