@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from pydantic.alias_generators import to_camel
 
 from app.models.job_status import JobStatus
+from app.core.languages import SourceLanguage
 
 
 TranslationWaitReason = Literal[
@@ -27,6 +28,7 @@ class JobResponse(BaseModel):
     original_filename: str
     size_bytes: int
     page_count: int
+    source_language: SourceLanguage = "ja"
     translated_page_count: int = 0
     status: JobStatus
     created_at: datetime
