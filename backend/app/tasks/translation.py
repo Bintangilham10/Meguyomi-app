@@ -5,6 +5,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from shutil import rmtree
+from threading import Event, Thread
 from typing import Protocol
 from uuid import uuid4
 
@@ -21,6 +22,7 @@ from app.services.manga_translation import (
     GeminiTranslationError,
     PageTranslation,
 )
+from app.services.local_translation import LocalPageTranslator
 from app.services.translated_pdf import (
     ResultBuildError,
     TranslationQualityError,
@@ -34,7 +36,7 @@ from app.tasks.preparation import normalize_job_id
 SessionFactory = Callable[[], Session]
 RetryJitter = Callable[[float, float], float]
 logger = logging.getLogger(__name__)
-TRANSLATION_RENDER_VERSION = "6"
+TRANSLATION_RENDER_VERSION = "7-local"
 
 
 class PageTranslator(Protocol):
@@ -49,6 +51,48 @@ class PageTranslator(Protocol):
 
 class TranslationClaimLost(Exception):
     pass
+
+
+def translate_page_with_heartbeat(
+    job_id: str,
+    session_factory: SessionFactory,
+    settings: Settings,
+    translator: PageTranslator,
+    page_path: Path,
+    *,
+    quality_reason: str | None,
+    tile_cache_directory: Path,
+) -> PageTranslation:
+    finished = Event()
+    claim_lost = Event()
+    interval = min(30.0, settings.translation_heartbeat_timeout_seconds / 3)
+
+    def keep_alive() -> None:
+        # CPU inference can exceed the watchdog deadline for a single page.
+        while not finished.wait(interval):
+            try:
+                if not touch_translation_heartbeat(job_id, session_factory):
+                    claim_lost.set()
+                    return
+            except Exception:
+                logger.exception("Translation heartbeat update failed for %s", job_id)
+                claim_lost.set()
+                return
+
+    heartbeat = Thread(target=keep_alive, name="translation-heartbeat", daemon=True)
+    heartbeat.start()
+    try:
+        translation = translator.translate_page(
+            page_path,
+            quality_reason=quality_reason,
+            tile_cache_directory=tile_cache_directory,
+        )
+    finally:
+        finished.set()
+        heartbeat.join()
+    if claim_lost.is_set():
+        raise TranslationClaimLost
+    return translation
 
 
 _QUALITY_FAILURE_CODES = {
@@ -306,6 +350,8 @@ def publish_translation_result(
 
 
 def is_deferred_gemini_error(error: GeminiTranslationError) -> bool:
+    if error.code == "AI_MODEL_NOT_READY":
+        return False
     if error.http_status in {408, 429}:
         return True
     if error.http_status is not None:
@@ -439,11 +485,15 @@ def checkpoint_page_is_valid(checkpoint: Path, preview: Path) -> bool:
     return True
 
 
-def checkpoint_record_is_valid(record_path: Path) -> bool:
+def checkpoint_record_is_valid(
+    record_path: Path, *, engine_version: str | None = None,
+) -> bool:
     try:
         payload = json.loads(record_path.read_text(encoding="utf-8"))
         translation = PageTranslation.model_validate(payload)
     except (OSError, ValueError):
+        return False
+    if engine_version is not None and translation.engine_version != engine_version:
         return False
     return all(
         isinstance(region, dict) and "source_language" in region
@@ -482,6 +532,8 @@ def reconcile_translation_checkpoints(
     checkpoint_pages: Path,
     preview_pages: list[Path],
     records_directory: Path,
+    *,
+    engine_version: str | None = None,
 ) -> list[Path]:
     ensure_checkpoint_render_version(
         checkpoint_pages,
@@ -501,7 +553,8 @@ def reconcile_translation_checkpoints(
             not checkpoint_page.is_file()
             or not checkpoint_page_is_valid(checkpoint_page, preview_page)
             or not checkpoint_record_is_valid(
-                records_directory / f"{preview_page.stem}.json"
+                records_directory / f"{preview_page.stem}.json",
+                engine_version=engine_version,
             )
         ):
             break
@@ -512,7 +565,7 @@ def reconcile_translation_checkpoints(
         if preview_page.name not in valid_names:
             (checkpoint_pages / preview_page.name).unlink(missing_ok=True)
             record_path = records_directory / f"{preview_page.stem}.json"
-            if not checkpoint_record_is_valid(record_path):
+            if not checkpoint_record_is_valid(record_path, engine_version=engine_version):
                 record_path.unlink(missing_ok=True)
 
     checkpoint_updated_at = None
@@ -816,6 +869,7 @@ def translate_job(
             translated_pages_directory,
             preview_pages,
             records_directory,
+            engine_version=getattr(translator, "engine_version", None),
         )
         for page_number in range(len(translated_pages) + 1, job.page_count + 1):
             preview_page = preview_pages[page_number - 1]
@@ -837,13 +891,20 @@ def translate_job(
                     raise TranslationClaimLost
                 if (
                     quality_attempt == 0
-                    and checkpoint_record_is_valid(translation_record)
+                    and checkpoint_record_is_valid(
+                        translation_record,
+                        engine_version=getattr(translator, "engine_version", None),
+                    )
                 ):
                     translation = PageTranslation.model_validate_json(
                         translation_record.read_text(encoding="utf-8")
                     )
                 else:
-                    translation = translator.translate_page(
+                    translation = translate_page_with_heartbeat(
+                        normalized_job_id,
+                        session_factory,
+                        settings,
+                        translator,
                         preview_page,
                         quality_reason=quality_reason,
                         tile_cache_directory=tile_cache_directory,
@@ -924,7 +985,9 @@ def translate_job(
             jitter=retry_jitter,
         ):
             return JobStatus.TRANSLATION_RETRY_WAIT
-        if error.http_status == 429:
+        if error.code == "AI_MODEL_NOT_READY":
+            failure_code = "AI_MODEL_NOT_READY"
+        elif error.http_status == 429:
             failure_code = "AI_RATE_LIMITED"
         elif is_deferred_gemini_error(error):
             failure_code = "AI_SERVICE_UNAVAILABLE"
@@ -995,40 +1058,38 @@ def translate_job(
 )
 def translate_job_task(job_id: str) -> str:
     settings = get_settings()
-    if not settings.gemini_api_key:
-        result = fail_queued_translation_job(
-            job_id,
-            SessionLocal,
-            "AI_NOT_CONFIGURED",
+    if settings.local_ai_url:
+        with SessionLocal() as session:
+            job = session.get(TranslationJob, job_id)
+            if job is None:
+                return "JOB_NOT_FOUND"
+            source_language = job.source_language
+        translator = LocalPageTranslator(
+            base_url=settings.local_ai_url, session_factory=SessionLocal,
+            source_language=source_language,
+            timeout_seconds=settings.local_ai_timeout_seconds,
+            max_image_bytes=settings.local_ai_max_image_bytes,
+            max_tile_aspect_ratio=settings.local_ai_max_tile_aspect_ratio,
+            tile_overlap_ratio=settings.local_ai_tile_overlap_ratio,
         )
-        logger.warning(
-            json.dumps(
-                {
-                    "event": "job_translation_configuration_missing",
-                    "jobId": job_id,
-                }
-            )
+    elif settings.gemini_api_key:
+        translator = GeminiPageTranslator(
+            api_key=settings.gemini_api_key,
+            model=settings.gemini_model,
+            timeout_seconds=settings.gemini_timeout_seconds,
+            max_image_bytes=settings.gemini_max_image_bytes,
+            max_response_bytes=settings.gemini_max_response_bytes,
+            max_output_tokens=settings.gemini_max_output_tokens,
+            max_tile_aspect_ratio=settings.gemini_max_tile_aspect_ratio,
+            tile_overlap_ratio=settings.gemini_tile_overlap_ratio,
+            min_request_interval_seconds=settings.gemini_min_request_interval_seconds,
+            max_retries=settings.gemini_max_retries,
+            retry_base_delay_seconds=settings.gemini_retry_base_delay_seconds,
+            retry_max_delay_seconds=settings.gemini_retry_max_delay_seconds,
+            inline_retry_max_delay_seconds=settings.gemini_inline_retry_max_delay_seconds,
         )
-        return result
-    translator = GeminiPageTranslator(
-        api_key=settings.gemini_api_key,
-        model=settings.gemini_model,
-        timeout_seconds=settings.gemini_timeout_seconds,
-        max_image_bytes=settings.gemini_max_image_bytes,
-        max_response_bytes=settings.gemini_max_response_bytes,
-        max_output_tokens=settings.gemini_max_output_tokens,
-        max_tile_aspect_ratio=settings.gemini_max_tile_aspect_ratio,
-        tile_overlap_ratio=settings.gemini_tile_overlap_ratio,
-        min_request_interval_seconds=(
-            settings.gemini_min_request_interval_seconds
-        ),
-        max_retries=settings.gemini_max_retries,
-        retry_base_delay_seconds=settings.gemini_retry_base_delay_seconds,
-        retry_max_delay_seconds=settings.gemini_retry_max_delay_seconds,
-        inline_retry_max_delay_seconds=(
-            settings.gemini_inline_retry_max_delay_seconds
-        ),
-    )
+    else:
+        return fail_queued_translation_job(job_id, SessionLocal, "AI_NOT_CONFIGURED")
     return translate_job(job_id, SessionLocal, settings, translator)
 
 
