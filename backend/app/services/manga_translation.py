@@ -67,11 +67,16 @@ class GeminiTranslationError(Exception):
         http_status: int | None = None,
         retryable: bool = False,
         retry_after_seconds: float | None = None,
+        code: str | None = None,
     ) -> None:
         super().__init__(message)
         self.http_status = http_status
         self.retryable = retryable
         self.retry_after_seconds = retry_after_seconds
+        self.code = code
+
+
+TranslationError = GeminiTranslationError
 
 
 class TranslationRegion(BaseModel):
@@ -116,6 +121,8 @@ class TranslationRegion(BaseModel):
 
 class PageTranslation(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    engine_version: str = "legacy"
 
     regions: list[TranslationRegion] = Field(
         default_factory=list,
