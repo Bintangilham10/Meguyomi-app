@@ -1081,3 +1081,129 @@ def test_translate_job_task_configures_gemini_retry_and_pacing(
     assert captured["retry_base_delay_seconds"] == 3
     assert captured["retry_max_delay_seconds"] == 45
     assert captured["inline_retry_max_delay_seconds"] == 11
+
+
+@pytest.mark.parametrize("old_api_key", ["", "should-not-be-used"])
+@pytest.mark.parametrize("source_language", ["ja", "zh-Hans", "zh-Hant"])
+def test_translate_job_task_prefers_local_ai_without_an_api_key(
+    monkeypatch,
+    tmp_path: Path,
+    old_api_key: str,
+    source_language: str,
+) -> None:
+    settings = Settings(
+        storage_root=tmp_path,
+        local_ai_url="http://local-ai:8001",
+        gemini_api_key=old_api_key,
+    )
+    captured: dict[str, object] = {}
+
+    class FakeLocalPageTranslator:
+        engine_version = "test-local"
+
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    def fake_translate_job(job_id, session_factory, configured_settings, translator):
+        captured.update(
+            job_id=job_id,
+            session_factory=session_factory,
+            settings=configured_settings,
+            translator=translator,
+        )
+        return JobStatus.COMPLETED
+
+    monkeypatch.setattr(translation_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        translation_module,
+        "LocalPageTranslator",
+        FakeLocalPageTranslator,
+    )
+    monkeypatch.setattr(translation_module, "translate_job", fake_translate_job)
+    engine, sessions = make_session_factory()
+    job_id = add_translation_job(sessions, tmp_path, page_count=1)
+    with sessions() as session:
+        session.get(TranslationJob, job_id).source_language = source_language
+        session.commit()
+    monkeypatch.setattr(translation_module, "SessionLocal", sessions)
+    result = translation_module.translate_job_task(job_id)
+
+    assert result == JobStatus.COMPLETED
+    assert captured["base_url"] == "http://local-ai:8001"
+    assert captured["source_language"] == source_language
+    assert isinstance(captured["translator"], FakeLocalPageTranslator)
+    engine.dispose()
+
+
+@pytest.mark.parametrize("saved_engine", ["legacy", "old-local-model"])
+def test_local_job_retranslates_checkpoints_from_other_engines(tmp_path, saved_engine):
+    engine, sessions = make_session_factory()
+    settings = Settings(storage_root=tmp_path)
+    job_id = add_translation_job(sessions, tmp_path, page_count=1)
+    checkpoint = tmp_path / "temporary" / f"{job_id}.translation"
+    pages = checkpoint / "pages"
+    pages.mkdir(parents=True)
+    (checkpoint / ".render-version").write_text(translation_module.TRANSLATION_RENDER_VERSION)
+    Image.new("RGB", (120, 160), "white").save(pages / "page-0001.png")
+    records = tmp_path / "translations" / job_id
+    records.mkdir(parents=True)
+    (records / "page-0001.json").write_text(
+        PageTranslation(engine_version=saved_engine).model_dump_json(), encoding="utf-8",
+    )
+    translator = FakeTranslator()
+    translator.engine_version = "current-local-model"
+    try:
+        assert translate_job(job_id, sessions, settings, translator) == JobStatus.COMPLETED
+        assert translator.pages == ["page-0001.png"]
+    finally:
+        engine.dispose()
+
+
+def test_local_model_not_ready_is_retryable_manually_without_deferred_retries(tmp_path):
+    from app.services.local_translation import LocalTranslationError
+
+    engine, sessions = make_session_factory()
+    job_id = add_translation_job(sessions, tmp_path, page_count=1)
+
+    class MissingModels:
+        def translate_page(self, *args, **kwargs):
+            raise LocalTranslationError("Models missing", code="AI_MODEL_NOT_READY", http_status=503)
+
+    try:
+        assert translate_job(job_id, sessions, Settings(storage_root=tmp_path), MissingModels()) == JobStatus.FAILED
+        with sessions() as session:
+            job = session.get(TranslationJob, job_id)
+            assert job.failure_code == "AI_MODEL_NOT_READY"
+            assert job.translation_retry_attempt == 0
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("owns_claim", [True, False])
+def test_long_inference_renews_heartbeat_and_stops_on_lost_claim(monkeypatch, tmp_path, owns_claim):
+    from threading import Event
+
+    observed = Event()
+
+    class FastEvent(Event):
+        def wait(self, timeout=None):
+            return super().wait(min(timeout, 0.01) if timeout is not None else None)
+
+    def heartbeat(job_id, sessions):
+        observed.set()
+        return owns_claim
+
+    class SlowTranslator:
+        def translate_page(self, *args, **kwargs):
+            assert observed.wait(2), "No heartbeat during inference"
+            return PageTranslation()
+
+    monkeypatch.setattr(translation_module, "Event", FastEvent)
+    monkeypatch.setattr(translation_module, "touch_translation_heartbeat", heartbeat)
+    args = ("job", None, Settings(storage_root=tmp_path), SlowTranslator(), tmp_path / "page.png")
+    kwargs = dict(quality_reason=None, tile_cache_directory=tmp_path / "tiles")
+    if owns_claim:
+        assert translation_module.translate_page_with_heartbeat(*args, **kwargs).regions == []
+    else:
+        with pytest.raises(translation_module.TranslationClaimLost):
+            translation_module.translate_page_with_heartbeat(*args, **kwargs)
