@@ -512,12 +512,20 @@ def _wrap_text(
     for paragraph in text.splitlines() or [text]:
         current = ""
         for word in paragraph.split() or [paragraph]:
-            candidate = f"{current} {word}".strip()
-            if not current or _text_length(draw, candidate, font) <= max_width:
-                current = candidate
-                continue
-            lines.append(current)
-            current = word
+            # Indonesian reduplications can wrap at their existing hyphen.
+            parts = (
+                re.split(r"(?<=-)(?=[^-])", word)
+                if _text_length(draw, word, font) > max_width
+                else [word]
+            )
+            for index, part in enumerate(parts):
+                separator = " " if current and index == 0 else ""
+                candidate = f"{current}{separator}{part}"
+                if current and _text_length(draw, candidate, font) > max_width:
+                    lines.append(current)
+                    current = part
+                else:
+                    current = candidate
         if current:
             lines.append(current)
     return "\n".join(lines)
@@ -807,6 +815,14 @@ def _choose_region_layout(
     base_box = _placement_pixel_box(region, width, height)
     minimum_size = _desired_min_font_size(width, height, region_type)
     preferred_minimum = _preferred_min_font_size(width, height, region_type)
+    # Small balloons need a floor based on their own size, not the page size.
+    compact_minimum = min(
+        minimum_size,
+        max(
+            _MIN_FONT_SIZE,
+            round(min(base_box[2] - base_box[0], base_box[3] - base_box[1]) * 0.20),
+        ),
+    )
     max_lines = _REGION_MAX_LINES.get(region_type)
     maximum_size = _maximum_font_size(width, height, region_type)
     candidates = _placement_candidates(
@@ -821,6 +837,7 @@ def _choose_region_layout(
     for candidate, candidate_minimum in (
         (base_box, preferred_minimum),
         (base_box, minimum_size),
+        (base_box, compact_minimum),
     ):
         try:
             font, wrapped, bounds, spacing = _fit_text(
