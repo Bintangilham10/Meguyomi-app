@@ -1,4 +1,5 @@
 import { canDeleteJob } from "@/lib/job-deletion";
+import { sourceLanguageLabel } from "@/lib/source-language";
 import {
   getJobStatusPresentation,
   shouldShowTranslationProgress,
@@ -93,6 +94,7 @@ export function JobListItem({
           {job.originalFilename}
         </p>
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-[var(--muted)]">
+          <span>{sourceLanguageLabel(job.sourceLanguage)} ke Indonesia</span>
           <span>{job.pageCount} halaman</span>
           <span>{formatBytes(job.sizeBytes)}</span>
           <span>{dateFormatter.format(new Date(job.createdAt))}</span>
