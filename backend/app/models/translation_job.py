@@ -10,6 +10,7 @@ from app.models.job_status import JobStatus
 RETRYABLE_TRANSLATION_FAILURE_CODES = frozenset(
     {
         "AI_NOT_CONFIGURED",
+        "AI_MODEL_NOT_READY",
         "AI_RATE_LIMITED",
         "AI_SERVICE_UNAVAILABLE",
         "AI_TRANSLATION_FAILED",
@@ -40,6 +41,7 @@ class TranslationJob(Base):
     stored_filename: Mapped[str] = mapped_column(String(255), unique=True)
     size_bytes: Mapped[int] = mapped_column(BigInteger)
     page_count: Mapped[int] = mapped_column(Integer)
+    source_language: Mapped[str] = mapped_column(String(16), default="ja", server_default="ja")
     translated_page_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(32), default=JobStatus.QUEUED)
     created_at: Mapped[datetime] = mapped_column(
