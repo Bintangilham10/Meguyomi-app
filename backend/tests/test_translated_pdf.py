@@ -223,6 +223,61 @@ def test_choose_region_layout_keeps_short_text_in_declared_box() -> None:
     measure_image.close()
 
 
+@pytest.mark.parametrize("text", ["Terang-terang", "Selamat pagi.", "bersama-sama"])
+def test_small_balloon_on_large_page_keeps_text_inside_its_box(text: str) -> None:
+    translation = PageTranslation.model_validate(
+        {
+            "regions": [
+                {
+                    "box_2d": [350, 23, 390, 65],
+                    "placement_box_2d": [350, 23, 390, 65],
+                    "region_type": "dialogue",
+                    "source_text": "Source",
+                    "translated_text": text,
+                }
+            ]
+        }
+    )
+    # Artwork surrounds the 107 x 143 pixel balloon on a 2560 pixel page.
+    pixels = np.zeros((3596, 2560, 3), dtype=np.uint8)
+    pixels[1259:1402, 59:166] = 255
+    with Image.new("RGB", (8, 8), "white") as measure_image:
+        placement, font, wrapped, bounds, _ = _choose_region_layout(
+            ImageDraw.Draw(measure_image), pixels, translation.regions[0],
+            2560, 3596, [],
+        )
+
+    assert placement == (59, 1259, 166, 1402)
+    assert 9 <= font.size < 31
+    assert "".join(wrapped.split()) == "".join(text.split())
+    assert bounds[2] <= 91
+    assert bounds[3] <= 127
+
+
+def test_small_balloon_still_rejects_text_that_cannot_fit_readably() -> None:
+    translation = PageTranslation.model_validate(
+        {
+            "regions": [
+                {
+                    "box_2d": [350, 23, 390, 65],
+                    "region_type": "dialogue",
+                    "source_text": "Source",
+                    "translated_text": "Kalimat panjang yang tidak akan muat. " * 12,
+                }
+            ]
+        }
+    )
+    pixels = np.zeros((3596, 2560, 3), dtype=np.uint8)
+    pixels[1259:1402, 59:166] = 255
+    with Image.new("RGB", (8, 8), "white") as measure_image:
+        with pytest.raises(TranslationQualityError) as caught:
+            _choose_region_layout(
+                ImageDraw.Draw(measure_image), pixels, translation.regions[0],
+                2560, 3596, [],
+            )
+    assert caught.value.reason == "text_does_not_fit"
+
+
 def test_choose_region_layout_uses_readable_font_on_long_webtoon() -> None:
     translation = PageTranslation.model_validate(
         {
