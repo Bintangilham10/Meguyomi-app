@@ -8,11 +8,11 @@ web
 
 ## Users
 
-Pengguna utama adalah pembaca atau penerjemah manga berbahasa Indonesia yang memiliki PDF manga dalam berbagai bahasa dan ingin menghasilkan PDF versi bahasa Indonesia dalam satu alur kerja privat.
+Pengguna utama adalah pembaca atau penerjemah manga berbahasa Indonesia yang memiliki PDF manga Jepang atau manhua Mandarin dan ingin menghasilkan PDF versi bahasa Indonesia dalam satu alur kerja privat.
 
 ## Product Purpose
 
-Meguyomi menerima satu PDF manga dalam bahasa apa pun, menyiapkan setiap halaman, mendeteksi bahasa sumber per blok teks, menerjemahkannya ke bahasa Indonesia dengan AI, memasang hasil terjemahan kembali ke halaman, dan menyediakan PDF hasil untuk diunduh.
+Meguyomi menerima satu PDF manga Jepang atau manhua Mandarin, menyiapkan setiap halaman, membaca blok teks dengan OCR lokal, menerjemahkannya ke bahasa Indonesia dengan model lokal dan translation memory, memasang hasil terjemahan kembali ke halaman, dan menyediakan PDF hasil untuk diunduh.
 
 ## Positioning
 
@@ -20,12 +20,12 @@ Meguyomi mempertahankan alur dan bentuk PDF asli. Proses per halaman dapat dipan
 
 ## Operating Context
 
-Pengguna masuk ke workspace privat, mengunggah PDF, menunggu persiapan halaman, memulai terjemahan ketika siap memakai kuota Gemini, memantau progres, menghentikan atau melanjutkan pekerjaan dari checkpoint, lalu mengunduh atau mencetak PDF penuh maupun parsial.
+Pengguna masuk ke workspace privat, mengunggah PDF, menunggu persiapan halaman, memulai terjemahan dengan mesin lokal, memantau progres, menghentikan atau melanjutkan pekerjaan dari checkpoint, lalu mengunduh atau mencetak PDF penuh maupun parsial.
 
 ## Capabilities and Constraints
 
-- Input MVP adalah PDF manga dalam bahasa apa pun dengan batas 50 MB dan 100 halaman.
-- Bahasa sumber dideteksi otomatis per blok sehingga satu halaman dapat memuat beberapa bahasa.
+- Input MVP adalah PDF manga Jepang atau manhua Mandarin dengan batas 50 MB dan 100 halaman.
+- Teks Jepang atau Mandarin dibaca oleh OCR lokal dan hasilnya disimpan ke translation memory lokal.
 - Halaman webtoon yang sangat panjang dipindai sebagai tile vertikal overlap, checkpoint berhasil disimpan per tile, lalu koordinatnya digabungkan kembali tanpa memakai deteksi teks yang terpotong di batas internal tile.
 - Output adalah PDF dengan teks berbahasa Indonesia.
 - Hasil dengan koordinat bertabrakan atau kegagalan pembersihan teks yang terlalu tinggi tidak diterbitkan dan dapat dipindai ulang.
