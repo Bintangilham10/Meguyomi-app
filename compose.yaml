@@ -5,31 +5,16 @@ x-backend-core-env: &backend-core-env
   DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://meguyomi:change-me@postgres:5432/meguyomi}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
   STORAGE_ROOT: /storage
+  LOCAL_AI_URL: ${LOCAL_AI_URL:-http://local-ai:8001}
+  LOCAL_AI_TIMEOUT_SECONDS: ${LOCAL_AI_TIMEOUT_SECONDS:-600}
+  LOCAL_AI_MAX_IMAGE_BYTES: ${LOCAL_AI_MAX_IMAGE_BYTES:-16777216}
+  LOCAL_AI_MAX_TILE_ASPECT_RATIO: ${LOCAL_AI_MAX_TILE_ASPECT_RATIO:-2.0}
+  LOCAL_AI_TILE_OVERLAP_RATIO: ${LOCAL_AI_TILE_OVERLAP_RATIO:-0.2}
   PREPARATION_TIMEOUT_SECONDS: ${PREPARATION_TIMEOUT_SECONDS:-600}
   TRANSLATION_HEARTBEAT_TIMEOUT_SECONDS: ${TRANSLATION_HEARTBEAT_TIMEOUT_SECONDS:-300}
   TRANSLATION_QUEUE_RECOVERY_DELAY_SECONDS: ${TRANSLATION_QUEUE_RECOVERY_DELAY_SECONDS:-60}
   TRANSLATION_CHECKPOINT_RETENTION_DAYS: ${TRANSLATION_CHECKPOINT_RETENTION_DAYS:-7}
   TRANSLATION_QUALITY_RESCAN_ATTEMPTS: ${TRANSLATION_QUALITY_RESCAN_ATTEMPTS:-1}
-  GEMINI_DEFERRED_RETRY_JITTER_RATIO: ${GEMINI_DEFERRED_RETRY_JITTER_RATIO:-0.25}
-  GEMINI_DEFERRED_RETRY_JITTER_MAX_SECONDS: ${GEMINI_DEFERRED_RETRY_JITTER_MAX_SECONDS:-60}
-
-x-gemini-env: &gemini-env
-  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
-  GEMINI_TIMEOUT_SECONDS: ${GEMINI_TIMEOUT_SECONDS:-90}
-  GEMINI_MAX_IMAGE_BYTES: ${GEMINI_MAX_IMAGE_BYTES:-13631488}
-  GEMINI_MAX_RESPONSE_BYTES: ${GEMINI_MAX_RESPONSE_BYTES:-2097152}
-  GEMINI_MAX_OUTPUT_TOKENS: ${GEMINI_MAX_OUTPUT_TOKENS:-8192}
-  GEMINI_MAX_TILE_ASPECT_RATIO: ${GEMINI_MAX_TILE_ASPECT_RATIO:-2.0}
-  GEMINI_TILE_OVERLAP_RATIO: ${GEMINI_TILE_OVERLAP_RATIO:-0.2}
-  GEMINI_MIN_REQUEST_INTERVAL_SECONDS: ${GEMINI_MIN_REQUEST_INTERVAL_SECONDS:-15}
-  GEMINI_MAX_RETRIES: ${GEMINI_MAX_RETRIES:-1}
-  GEMINI_RETRY_BASE_DELAY_SECONDS: ${GEMINI_RETRY_BASE_DELAY_SECONDS:-5}
-  GEMINI_RETRY_MAX_DELAY_SECONDS: ${GEMINI_RETRY_MAX_DELAY_SECONDS:-60}
-  GEMINI_INLINE_RETRY_MAX_DELAY_SECONDS: ${GEMINI_INLINE_RETRY_MAX_DELAY_SECONDS:-15}
-  GEMINI_SERVICE_RETRY_DELAYS_SECONDS: ${GEMINI_SERVICE_RETRY_DELAYS_SECONDS:-[60,300,900]}
-  GEMINI_RATE_LIMIT_RETRY_DELAYS_SECONDS: ${GEMINI_RATE_LIMIT_RETRY_DELAYS_SECONDS:-[60,900,3600]}
-  GEMINI_RETRY_HINT_MAX_SECONDS: ${GEMINI_RETRY_HINT_MAX_SECONDS:-86400}
 
 x-backend-service: &backend-service
   build:
@@ -49,7 +34,7 @@ services:
     environment:
       API_URL: ${API_URL:-http://api:8000}
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       api:
         condition: service_healthy
@@ -64,10 +49,8 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:-development-only-session-secret-change-me}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
       MAX_PDF_PAGES: ${MAX_PDF_PAGES:-100}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     healthcheck:
       test:
         - CMD
@@ -81,18 +64,29 @@ services:
 
   worker:
     <<: *backend-service
+    depends_on:
+      api:
+        condition: service_healthy
+      local-ai:
+        condition: service_healthy
     command: celery --app app.tasks.celery_app worker --loglevel=INFO --concurrency=1
     environment:
-      <<: [*backend-core-env, *gemini-env]
+      <<: *backend-core-env
       PREVIEW_RENDER_SCALE: ${PREVIEW_RENDER_SCALE:-2.0}
 
   maintenance:
     <<: *backend-service
+    depends_on:
+      api:
+        condition: service_healthy
     command: celery --app app.tasks.celery_app worker --loglevel=INFO --concurrency=1 --queues=maintenance
     environment: *backend-core-env
 
   beat:
     <<: *backend-service
+    depends_on:
+      api:
+        condition: service_healthy
     command: celery --app app.tasks.celery_app beat --loglevel=INFO --schedule=/tmp/celerybeat-schedule
     environment: *backend-core-env
 
@@ -121,6 +115,40 @@ services:
       timeout: 3s
       retries: 5
 
+  local-ai:
+    image: meguyomi-local-ai:latest
+    build:
+      context: ./local_ai
+    environment:
+      MODEL_ROOT: /models
+      LOCAL_AI_DEVICE: cpu
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    volumes:
+      - local_ai_models:/models:ro
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/ready')"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 300s
+
+  model-setup:
+    image: meguyomi-local-ai:latest
+    build:
+      context: ./local_ai
+    profiles: [setup]
+    command: python download_models.py
+    environment:
+      MODEL_ROOT: /models
+      HF_HUB_OFFLINE: "0"
+      TRANSFORMERS_OFFLINE: "0"
+    volumes:
+      - local_ai_models:/models
+
 volumes:
   postgres_data:
   redis_data:
+  local_ai_models:
