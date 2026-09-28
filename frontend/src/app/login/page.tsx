@@ -31,7 +31,7 @@ export default async function LoginPage() {
         </div>
         <div className="relative z-10 mb-4 max-w-lg">
           <h1 className="display-face text-5xl leading-[1.03] xl:text-6xl">
-            Manga dari berbagai bahasa, dibaca dalam bahasamu.
+            Manga Jepang dan manhua Mandarin, dibaca dalam bahasamu dengan mesin lokal.
           </h1>
           <p className="mt-5 max-w-md text-lg leading-8 text-[var(--ink-muted)]">
             Satu meja privat untuk mengunggah, menerjemahkan, memulihkan progres, dan
