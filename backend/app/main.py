@@ -6,6 +6,7 @@ from app.api.auth import router as auth_router
 from app.api.dependencies import AuthenticationRequired
 from app.api.health import router as health_router
 from app.api.jobs import router as jobs_router
+from app.api.memory import router as memory_router
 from app.core.config import get_settings
 
 
@@ -28,6 +29,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(health_router)
 app.include_router(jobs_router)
+app.include_router(memory_router)
 
 
 @app.exception_handler(AuthenticationRequired)
