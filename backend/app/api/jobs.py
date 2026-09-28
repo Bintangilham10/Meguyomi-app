@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import AuthenticatedUser
 from app.core.config import get_settings
+from app.core.languages import SourceLanguage
 from app.db.session import get_db
 from app.models.translation_job import (
     RETRYABLE_PREPARATION_FAILURE_CODES,
@@ -59,10 +60,11 @@ def api_error(status_code: int, code: str, message: str) -> JSONResponse:
 async def create_job(
     file: Annotated[
         UploadFile,
-        File(description="PDF manga dengan bahasa sumber apa pun"),
+        File(description="PDF manga berbahasa Jepang atau Mandarin"),
     ],
     username: AuthenticatedUser,
     db: Annotated[Session, Depends(get_db)],
+    source_language: Annotated[SourceLanguage, Form()] = "ja",
 ) -> JobResponse | JSONResponse:
     try:
         stored_pdf = await validate_and_store_pdf(file, get_settings())
@@ -84,6 +86,7 @@ async def create_job(
         stored_filename=stored_pdf.stored_filename,
         size_bytes=stored_pdf.size_bytes,
         page_count=stored_pdf.page_count,
+        source_language=source_language,
         status=JobStatus.QUEUED,
         created_at=stored_pdf.created_at,
     )
@@ -297,13 +300,12 @@ def start_translation(
     db: Annotated[Session, Depends(get_db)],
 ) -> JobResponse | JSONResponse:
     settings = get_settings()
-    if not settings.gemini_api_key:
+    if not settings.local_ai_url and not settings.gemini_api_key:
         return api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "AI_NOT_CONFIGURED",
-            "GEMINI_API_KEY belum dikonfigurasi pada server.",
+            "Mesin AI lokal belum dikonfigurasi pada server.",
         )
-
     normalized_job_id = str(job_id)
     job = db.scalar(
         select(TranslationJob)
