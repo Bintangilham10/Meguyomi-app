@@ -265,12 +265,27 @@ def _source_text_mask(
     else:
         stroke_mask = gray > threshold
 
+    # Colored artwork can contain black lettering even when its luminance is
+    # low. Try the opposite polarity only if the first mask is rejected.
+    for candidate in (stroke_mask, ~stroke_mask):
+        mask, succeeded = _source_stroke_mask(candidate, content_box)
+        if succeeded:
+            return mask, True
+    return empty_mask, False
+
+
+def _source_stroke_mask(
+    stroke_mask: np.ndarray,
+    content_box: tuple[int, int, int, int],
+) -> tuple[np.ndarray, bool]:
+    left, top, right, bottom = content_box
+    empty_mask = np.zeros(stroke_mask.shape, dtype=np.uint8)
     component_count, labels, stats, _ = cv2.connectedComponentsWithStats(
         stroke_mask.astype(np.uint8),
         connectivity=8,
     )
     content_area = max(1, (right - left) * (bottom - top))
-    crop_height, crop_width = gray.shape
+    crop_height, crop_width = stroke_mask.shape
     selected_labels: list[int] = []
     for label in range(1, component_count):
         x, y, component_width, component_height, area = stats[label]
@@ -507,6 +522,8 @@ def _wrap_text(
     text: str,
     font: ImageFont.ImageFont | ImageFont.FreeTypeFont,
     max_width: int,
+    *,
+    break_long_words: bool = False,
 ) -> str:
     lines: list[str] = []
     for paragraph in text.splitlines() or [text]:
@@ -518,6 +535,21 @@ def _wrap_text(
                 if _text_length(draw, word, font) > max_width
                 else [word]
             )
+            if break_long_words:
+                compact_parts = []
+                for part in parts:
+                    while _text_length(draw, part, font) > max_width:
+                        cut = 0
+                        for index in range(2, len(part) - 1):
+                            if _text_length(draw, part[:index] + "-", font) > max_width:
+                                break
+                            cut = index
+                        if not cut:
+                            break
+                        compact_parts.append(part[:cut] + "-")
+                        part = part[cut:]
+                    compact_parts.append(part)
+                parts = compact_parts
             for index, part in enumerate(parts):
                 separator = " " if current and index == 0 else ""
                 candidate = f"{current}{separator}{part}"
@@ -551,13 +583,14 @@ def _fit_text(
     max_font_size: int = _MAX_FONT_SIZE,
     max_lines: int | None = None,
     require_balanced_wrap: bool = False,
+    compact: bool = False,
 ) -> tuple[
     ImageFont.ImageFont | ImageFont.FreeTypeFont,
     str,
     tuple[int, int, int, int],
     int,
 ]:
-    padding = max(4, min(box_width, box_height) // 12)
+    padding = 2 if compact else max(4, min(box_width, box_height) // 12)
     available_width = max(1, box_width - 2 * padding)
     available_height = max(1, box_height - 2 * padding)
     minimum_size = max(_MIN_FONT_SIZE, min_font_size)
@@ -573,6 +606,7 @@ def _fit_text(
             text,
             font,
             available_width,
+            break_long_words=compact,
         )
         if require_balanced_wrap and not _wrap_is_readable(wrapped, max_lines):
             continue
@@ -820,7 +854,7 @@ def _choose_region_layout(
         minimum_size,
         max(
             _MIN_FONT_SIZE,
-            round(min(base_box[2] - base_box[0], base_box[3] - base_box[1]) * 0.20),
+            round(min(base_box[2] - base_box[0], base_box[3] - base_box[1]) * 0.10),
         ),
     )
     max_lines = _REGION_MAX_LINES.get(region_type)
@@ -853,6 +887,26 @@ def _choose_region_layout(
         except ResultBuildError:
             continue
         return candidate, font, wrapped, bounds, spacing
+
+    # Narrow captions may need a word continued on the next line. Keep the
+    # font floor and every character, using less padding inside the same box.
+    if region_type in {"dialogue", "caption"}:
+        try:
+            font, wrapped, bounds, spacing = _fit_text(
+                draw,
+                display_text,
+                base_box[2] - base_box[0],
+                base_box[3] - base_box[1],
+                min_font_size=compact_minimum,
+                max_font_size=maximum_size,
+                max_lines=max_lines,
+                require_balanced_wrap=True,
+                compact=True,
+            )
+        except ResultBuildError:
+            pass
+        else:
+            return base_box, font, wrapped, bounds, spacing
 
     # Expand only as a last resort, in small increments, and only across
     # background that looks compatible and does not overlap another region.
