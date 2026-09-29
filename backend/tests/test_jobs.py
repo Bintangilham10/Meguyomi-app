@@ -138,7 +138,7 @@ def test_upload_accepts_valid_pdf(
     assert body["originalFilename"] == "chapter-01.pdf"
     assert body["sizeBytes"] == len(pdf)
     assert body["pageCount"] == 2
-    assert body["sourceLanguage"] == "ja"
+    assert body["sourceLanguage"] == "auto"
     assert body["status"] == "QUEUED"
     assert body["id"]
     assert body["createdAt"]
@@ -148,8 +148,8 @@ def test_upload_accepts_valid_pdf(
     assert stored_files[0].name != "chapter-01.pdf"
 
 
-@pytest.mark.parametrize("source_language", ["zh-Hans", "zh-Hant"])
-def test_upload_persists_chinese_source_language(authenticated_client, source_language):
+@pytest.mark.parametrize("source_language", ["auto", "ja", "zh-Hans", "zh-Hant"])
+def test_upload_persists_source_language_choice(authenticated_client, source_language):
     response = authenticated_client.post(
         "/jobs", data={"source_language": source_language},
         files={"file": ("manhua.pdf", make_pdf(), "application/pdf")},
