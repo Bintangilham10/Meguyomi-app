@@ -141,6 +141,102 @@ def add_translation_job(session_factory, storage_root: Path, page_count: int = 2
     return job_id
 
 
+@pytest.mark.parametrize("language", ["ja", "zh-Hans", "zh-Hant"])
+def test_auto_language_is_detected_after_claim_and_saved_before_local_translation(tmp_path, monkeypatch, language):
+    engine, sessions = make_session_factory()
+    settings = Settings(storage_root=tmp_path, local_ai_url="http://local-ai")
+    job_id = add_translation_job(sessions, tmp_path)
+    with sessions() as session:
+        job = session.get(TranslationJob, job_id)
+        job.source_language = "auto"
+        job.prepared_at = datetime.now(timezone.utc)
+        session.commit()
+    detected = []
+    def detect(pages, **kwargs):
+        detected.extend(pages)
+        with sessions() as session:
+            job = session.get(TranslationJob, job_id)
+            assert job.status == JobStatus.TRANSLATING
+            assert job.translation_heartbeat_at is not None
+            assert job.source_language == "auto"
+        return language
+    translator = FakeTranslator()
+    def local_translator(**kwargs):
+        assert kwargs["source_language"] == language
+        with sessions() as session:
+            assert session.get(TranslationJob, job_id).source_language == language
+        return translator
+    monkeypatch.setattr(translation_module, "detect_source_language", detect)
+    monkeypatch.setattr(translation_module, "LocalPageTranslator", local_translator)
+    monkeypatch.setattr(translation_module, "SessionLocal", sessions)
+    monkeypatch.setattr(translation_module, "get_settings", lambda: settings)
+    try:
+        assert translation_module.translate_job_task(job_id) == JobStatus.COMPLETED
+        assert len(detected) == 2
+        assert len(translator.pages) == 2
+        with sessions() as session:
+            assert session.get(TranslationJob, job_id).source_language == language
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("code,retryable,expected", [
+    ("AI_LANGUAGE_DETECTION_FAILED", False, JobStatus.FAILED),
+    ("AI_MODEL_NOT_READY", False, JobStatus.FAILED),
+    (None, True, JobStatus.TRANSLATION_RETRY_WAIT),
+])
+def test_auto_language_failure_is_recoverable_without_creating_translator(tmp_path, monkeypatch, code, retryable, expected):
+    from app.services.local_translation import LocalTranslationError
+    engine, sessions = make_session_factory()
+    settings = Settings(storage_root=tmp_path, local_ai_url="http://local-ai")
+    job_id = add_translation_job(sessions, tmp_path)
+    with sessions() as session:
+        job = session.get(TranslationJob, job_id)
+        job.source_language = "auto"
+        job.prepared_at = datetime.now(timezone.utc)
+        session.commit()
+    def fail(*args, **kwargs):
+        raise LocalTranslationError("detection failure", code=code, retryable=retryable)
+    def unexpected(**kwargs):
+        pytest.fail("OCR must not start with an unresolved source language")
+    monkeypatch.setattr(translation_module, "detect_source_language", fail)
+    monkeypatch.setattr(translation_module, "LocalPageTranslator", unexpected)
+    try:
+        assert translate_job(job_id, sessions, settings) == expected
+        with sessions() as session:
+            job = session.get(TranslationJob, job_id)
+            assert job.source_language == "auto"
+            assert job.translated_page_count == 0
+            if expected == JobStatus.FAILED:
+                assert job.failure_code == code
+                assert job.can_retry_translation
+    finally:
+        engine.dispose()
+
+
+def test_stop_during_language_detection_does_not_persist_or_translate(tmp_path, monkeypatch):
+    engine, sessions = make_session_factory()
+    settings = Settings(storage_root=tmp_path, local_ai_url="http://local-ai")
+    job_id = add_translation_job(sessions, tmp_path)
+    with sessions() as session:
+        session.get(TranslationJob, job_id).source_language = "auto"
+        session.commit()
+    def stop(*args, **kwargs):
+        with sessions() as session:
+            session.get(TranslationJob, job_id).status = JobStatus.TRANSLATION_STOPPING
+            session.commit()
+        return "zh-Hans"
+    monkeypatch.setattr(translation_module, "detect_source_language", stop)
+    try:
+        assert translate_job(job_id, sessions, settings) == JobStatus.TRANSLATION_STOPPED
+        with sessions() as session:
+            job = session.get(TranslationJob, job_id)
+            assert job.source_language == "auto"
+            assert job.translated_page_count == 0
+    finally:
+        engine.dispose()
+
+
 def test_translate_job_builds_pdf_and_marks_job_completed(tmp_path: Path) -> None:
     engine, session_factory = make_session_factory()
     settings = Settings(storage_root=tmp_path)
