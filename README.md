@@ -78,12 +78,18 @@ Konfigurasi bawaan memakai CPU. Kecepatan dan kualitas perlu dinilai dengan
 halaman manga kamu sendiri, terutama teks kecil, SFX, dan balon yang rumit.
 Model NLLB bawaan berlisensi CC-BY-NC-4.0 untuk penggunaan nonkomersial.
 
-Pilih bahasa sumber saat upload: **Jepang**, **Mandarin (sederhana)**, atau
-**Mandarin (tradisional)**. Jepang memakai manga-ocr; Mandarin memakai pengenal
+Pilihan awal bahasa sumber saat upload adalah **Deteksi otomatis**. Pilihan manual
+**Jepang**, **Mandarin (sederhana)**, dan **Mandarin (tradisional)** tetap tersedia.
+Deteksi otomatis membandingkan OCR lokal pada maksimal lima halaman sampel sebelum
+menerjemahkan. Bahasa yang ditemukan tampil pada daftar pekerjaan. Jika hasilnya
+kurang yakin atau bahasa sampel berbeda, unggah ulang dengan pilihan manual.
+Deteksi ini memerlukan ketiga model OCR terpasang; tidak memerlukan API key.
+Jepang memakai manga-ocr; Mandarin memakai pengenal
 EasyOCR khusus `ch_sim` atau `ch_tra`. Ketiganya diterjemahkan ke Indonesia oleh
 NLLB lokal. Pemilihan bahasa disimpan bersama job dan digunakan kembali saat retry.
-Bahasa tidak ditebak otomatis karena karakter Han dapat memiliki arti berbeda
-antara Jepang dan Mandarin. Satu PDF menggunakan satu pilihan bahasa sumber.
+Detektor mengutamakan kana untuk Jepang dan membandingkan pembacaan Han untuk
+Mandarin; karakter Han yang tidak cukup jelas akan menghasilkan permintaan pilihan
+manual. Satu PDF menggunakan satu bahasa sumber.
 
 Untuk memperbarui instalasi Jepang yang sudah ada, jalankan:
 
@@ -132,6 +138,24 @@ Format impor adalah array JSON (maksimal 20 MB dari antarmuka):
 
 Kategori manual adalah `verified` atau `glossary`. Ekspor menyertakan versi model
 pada draf `machine` agar hasil model yang berbeda tidak digunakan kembali.
+
+## Gaya dialog Indonesia
+
+Hasil mesin untuk balon dialog diperhalus secara lokal ke gaya percakapan:
+`Saya tidak mengerti. Apakah Anda sudah selesai?` menjadi
+`Aku nggak ngerti. Apa kamu udah selesai?`. Aturan yang sama berlaku untuk
+Jepang, Mandarin sederhana, dan Mandarin tradisional, termasuk draf mesin
+yang diambil kembali dari bank. Judul, SFX, dan koreksi manual mempertahankan
+teksnya; narasi/caption tetap memakai register yang jelas. Bank menyimpan hasil mentah agar gaya suatu dialog
+tidak terbawa ke judul dengan teks sumber yang sama.
+
+Penyuntingan ini memakai aturan frasa terbatas, tanpa API atau unduhan model
+tambahan. Ini memperhalus pilihan kata; kesalahan OCR, makna, dan konteks dari
+NLLB masih perlu ditinjau melalui Bank terjemahan.
+
+PDF yang sudah selesai tetap tersedia. Unggah ulang PDF untuk menerapkan gaya
+baru ke seluruh halaman. Saat pekerjaan lama dilanjutkan, checkpoint dengan
+versi gaya berbeda diproses ulang agar hasilnya konsisten.
 Impor mengikuti `source_language` setiap entri, bukan pilihan bahasa pada formulir.
 File lama tanpa `source_language` tetap dianggap Jepang (`ja`).
 
