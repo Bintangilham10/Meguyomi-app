@@ -2,6 +2,7 @@ import json
 import logging
 import random
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from shutil import rmtree
@@ -22,7 +23,7 @@ from app.services.manga_translation import (
     GeminiTranslationError,
     PageTranslation,
 )
-from app.services.local_translation import LocalPageTranslator
+from app.services.local_translation import LocalPageTranslator, detect_source_language
 from app.services.translated_pdf import (
     ResultBuildError,
     TranslationQualityError,
@@ -36,7 +37,7 @@ from app.tasks.preparation import normalize_job_id
 SessionFactory = Callable[[], Session]
 RetryJitter = Callable[[float, float], float]
 logger = logging.getLogger(__name__)
-TRANSLATION_RENDER_VERSION = "7-local"
+TRANSLATION_RENDER_VERSION = "8-local"
 
 
 class PageTranslator(Protocol):
@@ -53,16 +54,14 @@ class TranslationClaimLost(Exception):
     pass
 
 
-def translate_page_with_heartbeat(
+@contextmanager
+def translation_heartbeat(
     job_id: str,
     session_factory: SessionFactory,
     settings: Settings,
-    translator: PageTranslator,
-    page_path: Path,
-    *,
-    quality_reason: str | None,
-    tile_cache_directory: Path,
-) -> PageTranslation:
+):
+    if not touch_translation_heartbeat(job_id, session_factory):
+        raise TranslationClaimLost
     finished = Event()
     claim_lost = Event()
     interval = min(30.0, settings.translation_heartbeat_timeout_seconds / 3)
@@ -82,17 +81,67 @@ def translate_page_with_heartbeat(
     heartbeat = Thread(target=keep_alive, name="translation-heartbeat", daemon=True)
     heartbeat.start()
     try:
-        translation = translator.translate_page(
-            page_path,
-            quality_reason=quality_reason,
-            tile_cache_directory=tile_cache_directory,
-        )
+        yield
     finally:
         finished.set()
         heartbeat.join()
     if claim_lost.is_set():
         raise TranslationClaimLost
-    return translation
+
+
+def translate_page_with_heartbeat(
+    job_id: str,
+    session_factory: SessionFactory,
+    settings: Settings,
+    translator: PageTranslator,
+    page_path: Path,
+    *,
+    quality_reason: str | None,
+    tile_cache_directory: Path,
+) -> PageTranslation:
+    with translation_heartbeat(job_id, session_factory, settings):
+        return translator.translate_page(
+            page_path,
+            quality_reason=quality_reason,
+            tile_cache_directory=tile_cache_directory,
+        )
+
+
+def prepare_local_translator(job, preview_pages, session_factory, settings):
+    source_language = job.source_language
+    if source_language == "auto":
+        def check_claim():
+            if not touch_translation_heartbeat(job.id, session_factory):
+                raise TranslationClaimLost
+
+        with translation_heartbeat(job.id, session_factory, settings):
+            source_language = detect_source_language(
+                preview_pages, base_url=settings.local_ai_url,
+                timeout_seconds=settings.local_ai_timeout_seconds,
+                max_image_bytes=settings.local_ai_max_image_bytes,
+                before_sample=check_claim,
+            )
+        with session_factory() as session:
+            updated = session.execute(
+                update(TranslationJob)
+                .where(TranslationJob.id == job.id,
+                       TranslationJob.status == JobStatus.TRANSLATING,
+                       TranslationJob.source_language == "auto")
+                .values(source_language=source_language)
+            )
+            session.commit()
+            if updated.rowcount != 1:
+                raise TranslationClaimLost
+        logger.info(json.dumps({"event": "job_language_detected", "jobId": job.id,
+                                "sourceLanguage": source_language}))
+    return LocalPageTranslator(
+        base_url=settings.local_ai_url, session_factory=session_factory,
+        source_language=source_language,
+        timeout_seconds=settings.local_ai_timeout_seconds,
+        max_image_bytes=settings.local_ai_max_image_bytes,
+        max_tile_aspect_ratio=settings.local_ai_max_tile_aspect_ratio,
+        tile_overlap_ratio=settings.local_ai_tile_overlap_ratio,
+    )
 
 
 _QUALITY_FAILURE_CODES = {
@@ -799,7 +848,7 @@ def translate_job(
     job_id: str,
     session_factory: SessionFactory,
     settings: Settings,
-    translator: PageTranslator,
+    translator: PageTranslator | None = None,
     *,
     retry_jitter: RetryJitter = random.uniform,
 ) -> str:
@@ -833,6 +882,8 @@ def translate_job(
             normalized_job_id,
             job.page_count,
         )
+        if translator is None:
+            translator = prepare_local_translator(job, preview_pages, session_factory, settings)
         if checkpoint_is_expired(
             job.checkpoint_updated_at,
             settings.translation_checkpoint_retention_days,
@@ -985,8 +1036,8 @@ def translate_job(
             jitter=retry_jitter,
         ):
             return JobStatus.TRANSLATION_RETRY_WAIT
-        if error.code == "AI_MODEL_NOT_READY":
-            failure_code = "AI_MODEL_NOT_READY"
+        if error.code in {"AI_MODEL_NOT_READY", "AI_LANGUAGE_DETECTION_FAILED"}:
+            failure_code = error.code
         elif error.http_status == 429:
             failure_code = "AI_RATE_LIMITED"
         elif is_deferred_gemini_error(error):
@@ -1064,14 +1115,17 @@ def translate_job_task(job_id: str) -> str:
             if job is None:
                 return "JOB_NOT_FOUND"
             source_language = job.source_language
-        translator = LocalPageTranslator(
-            base_url=settings.local_ai_url, session_factory=SessionLocal,
-            source_language=source_language,
-            timeout_seconds=settings.local_ai_timeout_seconds,
-            max_image_bytes=settings.local_ai_max_image_bytes,
-            max_tile_aspect_ratio=settings.local_ai_max_tile_aspect_ratio,
-            tile_overlap_ratio=settings.local_ai_tile_overlap_ratio,
-        )
+        translator = None
+        if source_language != "auto":
+            translator = LocalPageTranslator(
+                base_url=settings.local_ai_url, session_factory=SessionLocal,
+                source_language=source_language,
+                timeout_seconds=settings.local_ai_timeout_seconds,
+                max_image_bytes=settings.local_ai_max_image_bytes,
+                max_tile_aspect_ratio=settings.local_ai_max_tile_aspect_ratio,
+                tile_overlap_ratio=settings.local_ai_tile_overlap_ratio,
+            )
+        return translate_job(job_id, SessionLocal, settings, translator)
     elif settings.gemini_api_key:
         translator = GeminiPageTranslator(
             api_key=settings.gemini_api_key,
