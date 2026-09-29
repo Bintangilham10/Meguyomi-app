@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import AuthenticatedUser
 from app.core.config import get_settings
-from app.core.languages import SourceLanguage
+from app.core.languages import JobSourceLanguage
 from app.db.session import get_db
 from app.models.translation_job import (
     RETRYABLE_PREPARATION_FAILURE_CODES,
@@ -64,7 +64,7 @@ async def create_job(
     ],
     username: AuthenticatedUser,
     db: Annotated[Session, Depends(get_db)],
-    source_language: Annotated[SourceLanguage, Form()] = "ja",
+    source_language: Annotated[JobSourceLanguage, Form()] = "auto",
 ) -> JobResponse | JSONResponse:
     try:
         stored_pdf = await validate_and_store_pdf(file, get_settings())
