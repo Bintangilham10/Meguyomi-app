@@ -130,10 +130,15 @@ def test_render_translated_page_erases_tight_edge_touching_source(
         )
 
 
-def test_source_text_mask_keeps_interior_thin_cjk_stroke() -> None:
+@pytest.mark.parametrize("background, ink", [
+    ((255, 255, 255), (28, 68, 136)),
+    ((104, 40, 70), (10, 10, 10)),
+])
+def test_source_text_mask_keeps_interior_thin_cjk_stroke(background, ink) -> None:
     pixels = np.full((120, 120, 3), 255, dtype=np.uint8)
+    pixels[:] = background
     pixels[10:111, 20:23] = (0, 0, 0)
-    pixels[35:76, 55:59] = (28, 68, 136)
+    pixels[35:76, 55:59] = ink
 
     mask, succeeded = _source_text_mask(
         pixels,
@@ -276,6 +281,50 @@ def test_small_balloon_still_rejects_text_that_cannot_fit_readably() -> None:
                 2560, 3596, [],
             )
     assert caught.value.reason == "text_does_not_fit"
+
+
+def test_narrow_caption_wraps_a_word_without_expanding_over_artwork() -> None:
+    translation = PageTranslation.model_validate({
+        "regions": [{
+            "box_2d": [100, 100, 245, 240],
+            "placement_box_2d": [100, 100, 245, 240],
+            "region_type": "caption", "source_text": "Source",
+            "translated_text": "Pergilah.",
+        }],
+    })
+    pixels = np.zeros((200, 200, 3), dtype=np.uint8)
+    pixels[20:49, 20:48] = 255
+    with Image.new("RGB", (8, 8), "white") as measure:
+        box, font, wrapped, bounds, _ = _choose_region_layout(
+            ImageDraw.Draw(measure), pixels, translation.regions[0], 200, 200,
+            [(48, 20, 80, 49)],
+        )
+    assert box == (20, 20, 48, 49)
+    assert font.size >= 9
+    assert "-\n" in wrapped
+    assert wrapped.replace("-\n", "") == "Pergilah."
+    assert bounds[2] <= 24 and bounds[3] <= 25
+
+
+def test_vertical_balloon_fits_indonesian_sentence_inside_safe_area() -> None:
+    text = "Mengembangkan efisiensi pengelolaan dan pengelolaan"
+    translation = PageTranslation.model_validate({
+        "regions": [{
+            "box_2d": [82, 850, 173, 905],
+            "region_type": "dialogue", "source_text": "Source",
+            "translated_text": text,
+        }],
+    })
+    pixels = np.zeros((3582, 2560, 3), dtype=np.uint8)
+    pixels[294:620, 2176:2317] = 255
+    with Image.new("RGB", (8, 8), "white") as measure:
+        box, font, wrapped, bounds, _ = _choose_region_layout(
+            ImageDraw.Draw(measure), pixels, translation.regions[0], 2560, 3582, [],
+        )
+    assert box == (2176, 294, 2317, 620)
+    assert font.size >= 14
+    assert " ".join(wrapped.split()) == text
+    assert bounds[2] <= 141 and bounds[3] <= 326
 
 
 def test_choose_region_layout_uses_readable_font_on_long_webtoon() -> None:
