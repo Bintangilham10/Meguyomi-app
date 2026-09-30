@@ -12,9 +12,12 @@
     "test": "node --test --experimental-strip-types src/lib/job-contract.test.ts src/lib/job-deletion.test.ts src/lib/job-pagination.test.ts src/lib/job-status.test.ts src/lib/upload-policy.test.ts"
   },
   "dependencies": {
+    "@react-three/drei": "^10.7.9",
+    "@react-three/fiber": "^9.8.1",
     "next": "16.2.10",
     "react": "19.2.7",
-    "react-dom": "19.2.7"
+    "react-dom": "19.2.7",
+    "three": "^0.186.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.2",
