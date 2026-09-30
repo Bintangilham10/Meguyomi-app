@@ -1,3 +1,5 @@
+import type { JobSourceLanguage } from "@/lib/source-language";
+
 export type TranslationJobStatus =
   | "QUEUED"
   | "PROCESSING"
@@ -22,6 +24,7 @@ export interface TranslationJob {
   originalFilename: string;
   sizeBytes: number;
   pageCount: number;
+  sourceLanguage: JobSourceLanguage;
   translatedPageCount: number;
   status: TranslationJobStatus;
   createdAt: string;
