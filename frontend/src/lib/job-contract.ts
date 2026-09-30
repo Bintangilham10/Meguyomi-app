@@ -82,6 +82,7 @@ function isTranslationJob(value: unknown): value is TranslationJob {
     Number(value.sizeBytes) >= 0 &&
     Number.isInteger(value.pageCount) &&
     Number(value.pageCount) > 0 &&
+    (value.sourceLanguage === "auto" || value.sourceLanguage === "ja" || value.sourceLanguage === "zh-Hans" || value.sourceLanguage === "zh-Hant") &&
     translatedPageCountValid &&
     retryAttemptValid &&
     waitReasonValid &&
