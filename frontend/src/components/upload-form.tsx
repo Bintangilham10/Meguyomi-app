@@ -6,22 +6,27 @@ import { useRouter } from "next/navigation";
 import { parseApiErrorMessage, parseJobResponse } from "@/lib/job-contract";
 import { getJobStatusPresentation } from "@/lib/job-status";
 import { validatePdfSelection } from "@/lib/upload-policy";
-
+import {
+  JOB_SOURCE_LANGUAGES,
+  type JobSourceLanguage,
+} from "@/lib/source-language";
+import { StudioIcon } from "@/components/studio-icon";
 
 type Feedback = { kind: "error" | "success"; message: string } | null;
-
 
 export function UploadForm() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [sourceLanguage, setSourceLanguage] =
+    useState<JobSourceLanguage>("auto");
 
-  function handleFileChange() {
-    const file = fileInputRef.current?.files?.[0];
+  function selectFile(file?: File) {
     setFeedback(null);
-    setSelectedName(file?.name ?? null);
+    setSelectedFile(file ?? null);
     if (!file) {
       return;
     }
@@ -33,9 +38,13 @@ export function UploadForm() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const file = fileInputRef.current?.files?.[0];
+    if (isUploading) return;
+    const file = selectedFile;
     if (!file) {
-      setFeedback({ kind: "error", message: "Pilih PDF yang ingin diterjemahkan." });
+      setFeedback({
+        kind: "error",
+        message: "Pilih PDF yang ingin diterjemahkan.",
+      });
       return;
     }
 
@@ -50,7 +59,11 @@ export function UploadForm() {
     try {
       const formData = new FormData();
       formData.set("file", file);
-      const response = await fetch("/api/jobs", { method: "POST", body: formData });
+      formData.set("source_language", sourceLanguage);
+      const response = await fetch("/api/jobs", {
+        method: "POST",
+        body: formData,
+      });
       const body: unknown = await response.json().catch(() => null);
 
       if (!response.ok) {
@@ -81,12 +94,13 @@ export function UploadForm() {
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
-      setSelectedName(null);
+      setSelectedFile(null);
       setFeedback({
         kind: "success",
         message: "PDF diterima dan masuk ke antrean pekerjaan.",
       });
       router.replace("/");
+      router.refresh();
     } catch {
       setFeedback({
         kind: "error",
@@ -98,14 +112,94 @@ export function UploadForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mt-8" noValidate>
+    <form
+      onSubmit={handleSubmit}
+      className="upload-console"
+      noValidate
+      aria-busy={isUploading}
+    >
+      <div className="console-head">
+        <h2>
+          <StudioIcon name="spark" /> Mulai chapter baru
+        </h2>
+        <span>01 / UPLOAD</span>
+      </div>
+      <div className="language-route">
+        <div className="source-field">
+          <label htmlFor="source-language" className="field-label">
+            Bahasa sumber PDF
+          </label>
+          <select
+            id="source-language"
+            name="source_language"
+            value={sourceLanguage}
+            disabled={isUploading}
+            aria-describedby="language-help"
+            onChange={(event) =>
+              setSourceLanguage(event.target.value as JobSourceLanguage)
+            }
+            className="field-control"
+          >
+            {JOB_SOURCE_LANGUAGES.map((language) => (
+              <option key={language.value} value={language.value}>
+                {language.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <StudioIcon name="arrow" />
+        <div className="target-field">
+          <span className="field-label">Terjemahan</span>
+          <span className="target-language">
+            <span className="id-flag" aria-hidden="true" /> Indonesia
+          </span>
+        </div>
+      </div>
+      <p id="language-help" className="field-hint">
+        Otomatis memeriksa bahasa di beberapa halaman. Pilih manual jika sudah
+        tahu; satu bahasa sumber per PDF.
+      </p>
       <label
         htmlFor="manga-pdf"
-        className="paper-halftone group block cursor-pointer rounded-[14px] border-2 border-dashed border-[var(--border-strong)] bg-[var(--background)] p-5 transition hover:border-[var(--ink)] focus-within:border-[var(--accent)] focus-within:outline-2 focus-within:outline-offset-4 focus-within:outline-[var(--accent)] sm:p-6"
+        className={`drop-zone${isDragging ? " is-dragging" : ""}`}
+        onDragOver={(event) => {
+          event.preventDefault();
+          if (!isUploading) setIsDragging(true);
+        }}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+            setIsDragging(false);
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setIsDragging(false);
+          if (isUploading) return;
+          if (event.dataTransfer.files.length !== 1) {
+            setFeedback({
+              kind: "error",
+              message: "Pilih satu PDF untuk setiap unggahan.",
+            });
+            return;
+          }
+          if (fileInputRef.current) fileInputRef.current.value = "";
+          selectFile(event.dataTransfer.files[0]);
+        }}
       >
-        <span className="block text-lg font-bold">Taruh bab manga di meja</span>
-        <span id="pdf-help" className="mt-2 block text-sm leading-6 text-[var(--muted)]">
-          PDF manga dalam bahasa apa pun, maksimal 50 MB dan 100 halaman. PDF terenkripsi tidak didukung.
+        <span className="drop-icon">
+          <StudioIcon name="upload" />
+        </span>
+        <span className="drop-content">
+          <span className="drop-title">
+            {selectedFile ? selectedFile.name : "Tarik PDF ke sini"}
+          </span>
+          <span className="drop-link">
+            {selectedFile
+              ? "Klik untuk ganti file"
+              : "atau klik untuk pilih file"}
+          </span>
+          <span id="pdf-help" className="drop-help">
+            PDF / maks. 50 MB / 100 halaman / tanpa enkripsi
+          </span>
         </span>
         <input
           ref={fileInputRef}
@@ -115,31 +209,24 @@ export function UploadForm() {
           accept="application/pdf,.pdf"
           aria-describedby="pdf-help"
           disabled={isUploading}
-          onChange={handleFileChange}
-          className="mt-5 block w-full text-sm text-[var(--muted)] file:mr-4 file:cursor-pointer file:rounded-[10px] file:border file:border-[var(--ink)] file:bg-[var(--surface)] file:px-4 file:py-2.5 file:font-bold file:text-[var(--foreground)] hover:file:bg-[var(--ink)] hover:file:text-white focus-visible:outline-none disabled:opacity-60"
+          aria-label="Pilih PDF manga atau manhua"
+          onChange={() => selectFile(fileInputRef.current?.files?.[0])}
+          className="sr-only"
         />
-        {selectedName ? (
-          <span className="mt-4 block w-fit max-w-full break-all rounded-[8px] bg-[var(--surface)] px-3 py-2 text-sm font-bold text-[var(--foreground)]">
-            Terpilih: {selectedName}
-          </span>
-        ) : null}
       </label>
 
-      <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-center">
-        <button
-          type="submit"
-          disabled={isUploading}
-          className="brand-shadow inline-flex min-h-12 shrink-0 items-center justify-center rounded-[10px] border border-[var(--ink)] bg-[var(--accent)] px-6 py-3 text-sm font-bold text-white transition focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none disabled:transform-none"
-        >
+      <div className="submit-row">
+        <button type="submit" disabled={isUploading} className="primary-action">
           {isUploading ? "Mengunggah dan memeriksa..." : "Unggah PDF"}
+          <StudioIcon name="arrow" />
         </button>
         <p
           role={feedback?.kind === "error" ? "alert" : "status"}
           aria-live="polite"
           className={
             feedback?.kind === "error"
-              ? "text-sm font-medium leading-6 text-[var(--danger)]"
-              : "text-sm leading-6 text-[var(--muted)]"
+              ? "upload-feedback upload-feedback-error"
+              : "upload-feedback"
           }
         >
           {feedback?.message ?? "File asli disimpan privat di server Meguyomi."}
