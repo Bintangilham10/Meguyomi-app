@@ -24,7 +24,7 @@ const presentations: Record<TranslationJobStatus, JobStatusPresentation> = {
   },
   READY_FOR_TRANSLATION: {
     label: "Siap untuk AI",
-    detail: "Seluruh halaman siap. Mulai terjemahan saat Anda siap memakai kuota AI.",
+    detail: "Seluruh halaman siap. Mulai terjemahan dengan mesin lokal.",
     tone: "ready",
   },
   TRANSLATION_QUEUED: {
@@ -34,7 +34,7 @@ const presentations: Record<TranslationJobStatus, JobStatusPresentation> = {
   },
   TRANSLATING: {
     label: "Menerjemahkan",
-    detail: "AI sedang membaca dan menerjemahkan halaman manga.",
+    detail: "Mesin lokal sedang membaca dan menerjemahkan halaman manga.",
     tone: "active",
   },
   TRANSLATION_RETRY_WAIT: {
@@ -68,7 +68,7 @@ const qualityFailurePresentations: Record<string, JobStatusPresentation> = {
   RESULT_PLACEMENT_OVERLAP: {
     label: "Area teks saling bertumpuk",
     detail:
-      "Pemindaian korektif masih menghasilkan area teks yang bertumpuk. Coba lagi untuk memindai ulang halaman ini.",
+      "Sebagian area teks masih bertumpuk setelah dipindai ulang. Progres tersimpan. Pemindaian ulang dapat menghasilkan deteksi yang sama; halaman ini perlu diperiksa jika error berulang.",
     tone: "danger",
   },
   RESULT_SOURCE_MASK_FAILED: {
@@ -80,7 +80,7 @@ const qualityFailurePresentations: Record<string, JobStatusPresentation> = {
   RESULT_TEXT_FIT_FAILED: {
     label: "Teks belum muat dengan aman",
     detail:
-      "Terjemahan tidak dapat dimuat di area balon atau panel tanpa menutup gambar. Coba lagi untuk memindai ulang halaman ini.",
+      "Terjemahan belum muat di salah satu balon atau panel tanpa menutup gambar. Progres tersimpan. Periksa panjang teks di Bank terjemahan sebelum mencoba lagi; pemindaian ulang bisa menghasilkan area yang sama.",
     tone: "danger",
   },
 };
@@ -94,9 +94,9 @@ export function getJobStatusPresentation(
   if (status === "TRANSLATION_RETRY_WAIT") {
     if (waitReason === "rate_limited") {
       return {
-        label: "Menunggu batas Gemini",
+        label: "Menunggu mesin lokal",
         detail:
-          "Batas kuota Gemini tercapai, menunggu percobaan berikutnya.",
+          "Mesin lokal sedang sibuk, menunggu slot inferensi berikutnya.",
         tone: "active",
       };
     }
@@ -132,21 +132,35 @@ export function getJobStatusPresentation(
   if (status === "FAILED" && failureCode === "AI_NOT_CONFIGURED") {
     return {
       label: "AI belum dikonfigurasi",
-      detail: "Isi GEMINI_API_KEY pada server, lalu coba terjemahkan lagi.",
+      detail: "Periksa LOCAL_AI_URL dan pastikan service local-ai serta modelnya sudah siap, lalu coba terjemahkan lagi.",
+      tone: "danger",
+    };
+  }
+  if (status === "FAILED" && failureCode === "AI_MODEL_NOT_READY") {
+    return {
+      label: "Model lokal belum siap",
+      detail: "Selesaikan pemasangan model sesuai README, mulai ulang mesin lokal, lalu coba terjemahkan lagi.",
       tone: "danger",
     };
   }
   if (status === "FAILED" && failureCode === "AI_TRANSLATION_FAILED") {
     return {
       label: "Terjemahan AI gagal",
-      detail: "Periksa API key dan kuota Gemini, lalu coba terjemahkan lagi.",
+      detail: "Periksa model dan OCR pada service local-ai, lalu coba terjemahkan lagi.",
+      tone: "danger",
+    };
+  }
+  if (status === "FAILED" && failureCode === "AI_LANGUAGE_DETECTION_FAILED") {
+    return {
+      label: "Bahasa sumber belum dikenali",
+      detail: "Teks pada halaman sampel belum cukup jelas atau bahasanya bercampur. Unggah ulang PDF dan pilih Jepang, Mandarin (sederhana), atau Mandarin (tradisional) secara manual.",
       tone: "danger",
     };
   }
   if (status === "FAILED" && failureCode === "AI_RATE_LIMITED") {
     return {
-      label: "Batas Gemini tercapai",
-      detail: "Tunggu reset kuota Gemini atau aktifkan billing, lalu coba lagi.",
+      label: "Mesin lokal sedang sibuk",
+      detail: "Service local-ai sedang membatasi inferensi bersamaan. Tunggu pekerjaan selesai, lalu coba lagi.",
       tone: "danger",
     };
   }
