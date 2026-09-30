@@ -4,7 +4,7 @@ import "./globals.css";
 
 
 export const metadata: Metadata = {
-  title: "Meguyomi | Manga Translation Desk",
+  title: "Meguyomi | Manga favorit. Bahasa kita.",
   description: "Workspace privat untuk menerjemahkan manga PDF Jepang dan Mandarin ke bahasa Indonesia dengan mesin lokal tanpa API key.",
 };
 
