@@ -1,48 +1,47 @@
 # Meguyomi Visual System
 
+Meguyomi memakai bahasa visual studio editorial untuk pembaca manga: tipografi display yang tebal, bidang charcoal hangat, aksen coral, aqua, dan lime, serta maskot Alya 3D sebagai teman baca.
+
 ## Direction
 
-Meguyomi memakai dunia visual meja kerja penerjemah manga: lembar proof, tinta editorial, tanda koreksi merah, dan screentone. Karakter penerjemah anime orisinal menjadi jangkar brand, sementara area kerja tetap cepat dipindai.
+Halaman terasa seperti ruang kreatif kecil yang tenang, bukan dashboard SaaS. Upload menjadi tugas utama. Alya menjadi potret anime 3D Alya yang dibuat secara prosedural berdasarkan referensi pengguna yang bisa diputar dengan drag, disentuh pada kepala atau buku, memiliki reaksi berbeda, dan dapat dijeda tanpa mengganggu pekerjaan.
 
 ## Palette
 
-- Paper: `#eef0ed`
-- Surface: `#fafbf8`
-- Ink: `#17181b`
-- Muted ink: `#62656b`
-- Coral: `#e74749`
-- Coral dark: `#b9272d`
-- Line: `#c9cbc6`
-- Danger memakai coral dark agar halaman hanya memiliki satu keluarga aksen.
-
-Warna dikunci pada mode terang karena konteks penggunaan menyerupai meja proof di ruang kerja dengan cahaya netral.
+- Charcoal background: `#0c1019`
+- Surface: `#141b27`
+- Text: `#f0f1f4`
+- Muted: `#a1abbc`
+- Coral action: `#ff7b72`
+- Aqua signal: `#89dce0`
+- Lime status: `#d4ef98`
 
 ## Typography
 
-- Display: Arial Black atau fallback sans-serif berat dan rapat.
-- UI dan body: Arial, Helvetica, sans-serif.
-- Angka memakai `font-variant-numeric: tabular-nums`.
-- Heading tidak memakai gradient, serif dekoratif, atau uppercase tracking berulang.
-
-## Composition
-
-- Dashboard memakai komposisi asimetris: upload sebagai tugas utama, karakter sebagai jangkar visual, lalu riwayat pekerjaan selebar halaman.
-- Login memakai split editorial dengan karakter yang sama.
-- Mobile runtuh menjadi satu kolom, upload selalu muncul sebelum dekorasi.
-- Halftone hanya dipakai pada bidang ilustrasi, bukan di belakang teks panjang.
-
-## Components
-
-- Radius panel 14px, kontrol 10px, dan chip status 8px.
-- Tombol utama memakai coral solid dengan teks putih.
-- Tombol sekunder memakai surface dengan garis ink.
-- Panel hanya dipakai untuk kelompok tugas nyata. Baris job dipisahkan oleh ruang dan satu garis bawah.
-- Status tidak memakai titik dekoratif. Label status sendiri membawa makna.
+- Display: local `Space Grotesk` for headings and labels.
+- Body: local `Manrope` for readable Indonesian UI copy.
+- Fonts are bundled under `frontend/public/fonts`, so the interface does not depend on an external network at runtime.
 
 ## Motion
 
-Satu gerak karakter yang sangat lembut memberi kehidupan pada brand. Hover dan active state memberi feedback pada kontrol. Semua gerak dinonaktifkan saat `prefers-reduced-motion: reduce`.
+- Alya floats gently, shifts a small amount toward the pointer, and uses orbit controls for touch or mouse rotation.
+- Orbit lines and the accent spark drift slowly.
+- Head, book, and greeting controls trigger distinct Indonesian reactions.
+- A visible pause button stops character motion.
+- The pause preference persists across page navigation and reloads. It also updates across browser tabs.
+- Character animations pause when the stage is outside the viewport or the browser tab is hidden; WebGL failure shows a reloadable fallback.
+- `prefers-reduced-motion` disables animation and pointer parallax.
 
-## Imagery
+## Composition
 
-`frontend/public/meguyomi-translator.png` adalah karakter anime orisinal yang dibuat untuk proyek ini. Gunakan sebagai visual utama pada dashboard dan login, dengan ukuran terreservasi untuk mencegah layout shift.
+- Top bar: brand, Studio/Bank navigation, account state.
+- Hero: upload console on the left, Alya character stage on the right.
+- Signal strip: real local-AI status, archive count, supported source languages.
+- Queue: existing translation jobs keep their actions, progress, retry, preview, download, and delete behavior.
+- Login and translation memory use the same chrome and visual system.
+
+## Responsive behavior
+
+Desktop uses a two-column hero and three-column signal strip. Below 800px the experience becomes one column, keeps the upload before decoration, stacks the character stage, and presents job controls below each job. The layout is checked at 320px, 390px, 768px, and 1440px.
+
+On mobile login, the form comes before the character in both visual order and keyboard navigation. The introductory heading remains available to assistive technology.
