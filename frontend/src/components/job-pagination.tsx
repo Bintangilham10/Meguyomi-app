@@ -28,7 +28,7 @@ export function JobPagination({ pagination }: JobPaginationProps) {
       {hasPrevious ? (
         <Link
           href={pageHref(pagination.page - 1)}
-          className="rounded-[10px] border border-[var(--ink)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-bold transition hover:bg-[var(--ink)] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+          className="secondary-action"
           rel="prev"
         >
           Sebelumnya
@@ -44,7 +44,7 @@ export function JobPagination({ pagination }: JobPaginationProps) {
       {hasNext ? (
         <Link
           href={pageHref(pagination.page + 1)}
-          className="rounded-[10px] border border-[var(--ink)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-bold transition hover:bg-[var(--ink)] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+          className="secondary-action"
           rel="next"
         >
           Berikutnya
