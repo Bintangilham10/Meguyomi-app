@@ -79,22 +79,21 @@ export function JobListItem({
     job.status === "TRANSLATION_QUEUED" ||
     job.status === "TRANSLATING" ||
     job.status === "TRANSLATION_RETRY_WAIT";
-  const statusClass =
-    presentation.tone === "danger"
-      ? "bg-[var(--accent-wash)] text-[var(--danger)]"
-      : "bg-[var(--background)] text-[var(--foreground)]";
+  const statusClass = `job-status job-status-${presentation.tone}`;
   const previewId = `result-preview-${job.id}`;
   const previewUrl = `/api/jobs/${job.id}/result?mode=preview`;
   const isPartialResult = job.status === "TRANSLATION_STOPPED";
 
   return (
-    <li className="grid gap-5 py-6 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,auto)] lg:items-center">
+    <li className="job-row">
       <div className="min-w-0">
-        <p className="truncate text-lg font-bold" title={job.originalFilename}>
+        <p className="job-name" title={job.originalFilename}>
           {job.originalFilename}
         </p>
-        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-[var(--muted)]">
-          <span>{sourceLanguageLabel(job.sourceLanguage)} ke Indonesia</span>
+        <div className="job-meta">
+          <span>{job.sourceLanguage === "auto"
+            ? job.status === "TRANSLATING" ? "Mendeteksi bahasa sumber..." : "Bahasa sumber: deteksi otomatis"
+            : `${sourceLanguageLabel(job.sourceLanguage)} ke Indonesia`}</span>
           <span>{job.pageCount} halaman</span>
           <span>{formatBytes(job.sizeBytes)}</span>
           <span>{dateFormatter.format(new Date(job.createdAt))}</span>
@@ -118,9 +117,9 @@ export function JobListItem({
           </div>
         ) : null}
       </div>
-      <div className="flex flex-col items-start gap-3 lg:items-end">
+      <div className="job-controls">
         <p
-          className={`inline-flex w-fit rounded-[8px] px-3 py-2 text-xs font-bold ${statusClass}`}
+          className={statusClass}
         >
           {presentation.label}
           <span className="sr-only">: {presentation.detail}</span>
@@ -147,13 +146,13 @@ export function JobListItem({
             ) : null}
           </p>
         ) : null}
-        <div className="flex flex-wrap gap-2 lg:justify-end">
+        <div className="job-actions">
           {canStartTranslation ? (
             <button
               type="button"
               disabled={isStarting || isStopping || isDeleting}
               onClick={() => onStartTranslation(job.id)}
-              className="rounded-[10px] border border-[var(--ink)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-bold transition hover:bg-[var(--ink)] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
+              className="secondary-action"
             >
               {isStarting
                 ? "Mengantrekan..."
@@ -169,7 +168,7 @@ export function JobListItem({
               type="button"
               disabled={isStopping || isStarting || isDeleting}
               onClick={() => onStopTranslation(job.id)}
-              className="rounded-[10px] border border-[var(--danger)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-bold text-[var(--danger)] transition hover:bg-[var(--accent-wash)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--danger)] disabled:cursor-not-allowed disabled:opacity-60"
+              className="secondary-action action-danger"
             >
               {isStopping ? "Menghentikan..." : "Stop terjemahan"}
             </button>
@@ -179,7 +178,7 @@ export function JobListItem({
               type="button"
               disabled={isStarting || isStopping || isDeleting}
               onClick={() => onRetryPreparation(job.id)}
-              className="rounded-[10px] border border-[var(--ink)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-bold transition hover:bg-[var(--ink)] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
+              className="secondary-action"
             >
               {isStarting ? "Mengantrekan..." : "Coba siapkan lagi"}
             </button>
@@ -191,7 +190,7 @@ export function JobListItem({
                 aria-controls={previewId}
                 aria-expanded={isPreviewOpen}
                 onClick={() => onTogglePreview(job.id)}
-                className="rounded-[10px] border border-[var(--ink)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-bold transition hover:bg-[var(--ink)] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+                className="secondary-action"
               >
                 {isPreviewOpen
                   ? "Tutup preview"
@@ -201,7 +200,7 @@ export function JobListItem({
               </button>
               <a
                 href={`/api/jobs/${job.id}/result`}
-                className="rounded-[10px] border border-[var(--ink)] bg-[var(--accent)] px-3 py-2 text-xs font-bold text-white transition hover:bg-[var(--accent-strong)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] active:translate-y-px"
+                className="primary-action"
               >
                 {job.status === "TRANSLATION_STOPPED"
                   ? "Unduh PDF parsial"
@@ -212,7 +211,7 @@ export function JobListItem({
                 target="_blank"
                 rel="noopener noreferrer"
                 title="Buka PDF di tab baru untuk dicetak"
-                className="rounded-[10px] border border-[var(--ink)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-bold transition hover:bg-[var(--ink)] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+                className="secondary-action"
               >
                 {job.status === "TRANSLATION_STOPPED"
                   ? "Cetak PDF parsial"
@@ -254,7 +253,7 @@ export function JobListItem({
                 href={previewUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="rounded-[10px] border border-[var(--ink)] px-3 py-2 text-xs font-bold transition hover:bg-[var(--ink)] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+                className="secondary-action"
               >
                 Buka di tab baru
               </a>
