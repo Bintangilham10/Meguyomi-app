@@ -60,18 +60,25 @@ test("getJobStatusPresentation explains recoverable AI failures", () => {
   );
 
   assert.equal(missingConfiguration.label, "AI belum dikonfigurasi");
-  assert.match(missingConfiguration.detail, /GEMINI_API_KEY/);
+  assert.match(missingConfiguration.detail, /LOCAL_AI_URL/);
   assert.equal(providerFailure.label, "Terjemahan AI gagal");
   assert.match(providerFailure.detail, /coba terjemahkan lagi/i);
 });
 
 
-test("getJobStatusPresentation explains exhausted Gemini rate limits", () => {
+test("getJobStatusPresentation explains a busy local AI service", () => {
   const presentation = getJobStatusPresentation("FAILED", "AI_RATE_LIMITED");
 
-  assert.equal(presentation.label, "Batas Gemini tercapai");
-  assert.match(presentation.detail, /reset kuota/i);
-  assert.match(presentation.detail, /billing/i);
+  assert.equal(presentation.label, "Mesin lokal sedang sibuk");
+  assert.match(presentation.detail, /local-ai/i);
+});
+
+
+test("getJobStatusPresentation explains missing local models", () => {
+  const presentation = getJobStatusPresentation("FAILED", "AI_MODEL_NOT_READY");
+
+  assert.equal(presentation.label, "Model lokal belum siap");
+  assert.match(presentation.detail, /pemasangan model/i);
 });
 
 
@@ -109,7 +116,7 @@ test("getJobStatusPresentation explains every automatic wait reason", () => {
       null,
       "rate_limited",
     ).detail,
-    /kuota Gemini/i,
+    /slot inferensi/i,
   );
   assert.match(
     getJobStatusPresentation(
@@ -138,6 +145,13 @@ test("getJobStatusPresentation explains unavailable AI after retries", () => {
 
   assert.equal(presentation.label, "Layanan AI belum tersedia");
   assert.match(presentation.detail, /coba lagi/i);
+});
+
+test("uncertain language detection directs the user to manual selection", () => {
+  const presentation = getJobStatusPresentation("FAILED", "AI_LANGUAGE_DETECTION_FAILED");
+  assert.equal(presentation.label, "Bahasa sumber belum dikenali");
+  assert.match(presentation.detail, /pilih Jepang.*manual/);
+  assert.equal(presentation.tone, "danger");
 });
 
 
