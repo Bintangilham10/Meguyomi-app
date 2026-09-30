@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { JOB_SOURCE_LANGUAGES, SOURCE_LANGUAGES, sourceLanguageLabel } from "./source-language.ts";
 
 import {
   parseApiErrorMessage,
@@ -13,6 +14,7 @@ const validJob = {
   originalFilename: "chapter-01.pdf",
   sizeBytes: 1_024,
   pageCount: 12,
+  sourceLanguage: "ja",
   translatedPageCount: 0,
   translationRetryAttempt: 0,
   translationNextRetryAt: null,
@@ -42,6 +44,21 @@ test("parseJobListResponse accepts a valid backend response", () => {
 test("parseJobResponse validates a created job", () => {
   assert.deepEqual(parseJobResponse(validJob), validJob);
   assert.equal(parseJobResponse({ ...validJob, status: "UNKNOWN" }), null);
+});
+
+test("parseJobResponse preserves automatic and manual language choices", () => {
+  for (const sourceLanguage of ["auto", "ja", "zh-Hans", "zh-Hant"]) {
+    const job = { ...validJob, sourceLanguage };
+    assert.equal(parseJobResponse(job)?.sourceLanguage, sourceLanguage);
+  }
+  assert.equal(parseJobResponse({ ...validJob, sourceLanguage: "en" }), null);
+});
+
+test("auto is available for uploads without leaking into the memory bank", () => {
+  assert.equal(JOB_SOURCE_LANGUAGES[0].value, "auto");
+  assert.equal(sourceLanguageLabel("auto"), "Deteksi otomatis");
+  assert.deepEqual(SOURCE_LANGUAGES.map(language => language.value), ["ja", "zh-Hans", "zh-Hant"]);
+  assert.ok(parseJobListResponse({ data: [{ ...validJob, sourceLanguage: "auto" }], pagination: validPagination }));
 });
 
 
