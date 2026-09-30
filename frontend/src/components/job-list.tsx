@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { JobListItem } from "@/components/job-list-item";
 import { JobPagination } from "@/components/job-pagination";
+import { StudioIcon } from "@/components/studio-icon";
 import { parseApiErrorMessage, parseJobResponse } from "@/lib/job-contract";
 import { shouldRefreshJobStatus } from "@/lib/job-status";
 import type { JobPagination as JobPaginationData, TranslationJob } from "@/types/job";
@@ -191,7 +192,7 @@ export function JobList({ jobs, pagination, error }: JobListProps) {
   if (error) {
     return (
       <div role="alert" className="mt-6 rounded-[14px] bg-[var(--accent-wash)] p-5 text-[var(--accent-strong)]">
-        <p className="font-bold">Meja pekerjaan belum dapat dibuka</p>
+        <p className="font-bold">Antrean studio belum dapat dibuka</p>
         <p className="mt-1 text-sm leading-6">{error}</p>
       </div>
     );
@@ -199,11 +200,10 @@ export function JobList({ jobs, pagination, error }: JobListProps) {
 
   if (jobs.length === 0) {
     return (
-      <div role="status" className="paper-halftone mt-6 rounded-[14px] border border-dashed border-[var(--border-strong)] p-8 sm:p-10">
-        <p className="display-face text-2xl">Rak kerja masih kosong.</p>
-        <p className="mt-2 max-w-md text-sm leading-6 text-[var(--muted)]">
-          Unggah satu PDF. Status persiapan dan terjemahannya akan muncul di bagian ini.
-        </p>
+      <div role="status" className="queue-empty">
+        <span className="empty-illustration" aria-hidden="true"><StudioIcon name="book" /><span>01</span></span>
+        <div><p className="display-face text-2xl">Chapter pertamamu menunggu.</p>
+        <p className="mt-2 max-w-md text-sm leading-6 text-[var(--muted)]">Unggah PDF di panel atas. Progres dan hasil terjemahannya akan muncul di sini.</p></div>
       </div>
     );
   }
@@ -217,7 +217,7 @@ export function JobList({ jobs, pagination, error }: JobListProps) {
       ) : null}
       <ol
         aria-live="polite"
-        className="mt-2 divide-y divide-[var(--border)]"
+        className="queue-list"
       >
         {jobs.map((job) => (
           <JobListItem
