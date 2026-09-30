@@ -12,7 +12,7 @@ export function LoginForm() {
   const [state, formAction, isPending] = useActionState(loginAction, initialState);
 
   return (
-    <form action={formAction} className="mt-8 space-y-5">
+    <form action={formAction} className="login-form" aria-busy={isPending}>
       <div>
         <label htmlFor="username" className="block text-sm font-bold">
           Username
@@ -24,8 +24,7 @@ export function LoginForm() {
           autoComplete="username"
           required
           maxLength={64}
-          autoFocus
-          className="mt-2 w-full rounded-[10px] border border-[var(--border-strong)] bg-[var(--surface-strong)] px-4 py-3.5 text-base outline-none transition focus:border-[var(--ink)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+          className="field-control"
         />
       </div>
 
@@ -40,7 +39,7 @@ export function LoginForm() {
           autoComplete="current-password"
           required
           maxLength={256}
-          className="mt-2 w-full rounded-[10px] border border-[var(--border-strong)] bg-[var(--surface-strong)] px-4 py-3.5 text-base outline-none transition focus:border-[var(--ink)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+          className="field-control"
         />
       </div>
 
@@ -56,9 +55,9 @@ export function LoginForm() {
       <button
         type="submit"
         disabled={isPending}
-        className="brand-shadow min-h-12 w-full rounded-[10px] border border-[var(--ink)] bg-[var(--accent)] px-4 py-3 font-bold text-white transition focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none disabled:transform-none"
+        className="primary-action"
       >
-        {isPending ? "Memeriksa..." : "Masuk"}
+        {isPending ? "Memeriksa..." : "Masuk ke studio"}
       </button>
     </form>
   );
