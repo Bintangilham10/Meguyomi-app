@@ -1,0 +1,14 @@
+fastapi==0.139.0
+uvicorn==0.34.0
+Pillow==12.3.0
+numpy==1.26.4
+opencv-python-headless==4.11.0.86
+easyocr==1.7.2
+transformers==4.48.3
+ctranslate2==4.6.0
+sentencepiece==0.2.0
+huggingface-hub==0.28.1
+fugashi==1.4.0
+unidic-lite==1.0.8
+pytest==9.0.2
+httpx==0.28.1
