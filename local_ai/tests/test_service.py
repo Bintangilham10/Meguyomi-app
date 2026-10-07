@@ -10,7 +10,7 @@ from PIL import Image
 
 import app as service
 from engine import LocalEngine
-from layout import TextArea, _resolve_placement_overlaps, _separate_nested_sources, group_balloons, merge_overlapping_boxes
+from layout import TextArea, _member_clusters, _overlap_ratio, _resolve_placement_overlaps, _separate_nested_sources, group_balloons, merge_overlapping_boxes, union
 from model_config import MANIFEST, MODEL_VERSIONS, models_present, translation_models_present
 
 
@@ -172,6 +172,84 @@ def test_nested_balloon_splits_a_distant_member_cluster():
     separated = _separate_nested_sources(areas)
     assert len(separated) == 3
     assert sorted(len(area.members) for area in separated) == [1, 1, 4]
+
+
+def test_nested_balloon_splits_horizontal_clusters_without_losing_detections():
+    # A connected white component on page 11 grouped two distant columns
+    # around a third balloon. Tightening its union still covered that balloon.
+    first = (1330, 970, 1383, 1086)
+    second = (1513, 1002, 1700, 1144)
+    nested = (1387, 993, 1454, 1166)
+    areas = [
+        TextArea((1326, 966, 1704, 1148), (1330, 970, 1700, 1144), "dialogue", (first, second)),
+        TextArea((1383, 989, 1458, 1170), nested, "dialogue", (nested,)),
+    ]
+    for ordering in permutations(areas):
+        separated = _resolve_placement_overlaps(_separate_nested_sources(list(ordering)))
+        assert len(separated) == 3
+        assert sorted(box for area in separated for box in area.members) == sorted((first, second, nested))
+        for index, area in enumerate(separated):
+            for other in separated[index + 1:]:
+                a, b = area.placement, other.placement
+                assert min(a[2], b[2]) <= max(a[0], b[0]) or min(a[3], b[3]) <= max(a[1], b[1])
+
+
+def test_nested_balloon_keeps_adjacent_vertical_columns_together():
+    first = (10, 10, 30, 110)
+    second = (45, 10, 65, 110)
+    area = TextArea((6, 6, 69, 114), (10, 10, 65, 110), "dialogue", (first, second))
+    # An expanded placement alone does not separate columns: its actual
+    # source is outside the space between them.
+    neighbor = TextArea((75, 10, 90, 110), (5, 5, 70, 115), "dialogue", ((75, 10, 90, 110),))
+    assert _separate_nested_sources([area, neighbor]) == [area, neighbor]
+
+
+def test_nested_source_blocks_a_proximity_bridge_between_wide_detections():
+    # Page 20: the median short side permits a 169px gap, but another
+    # source lies in that gap. Keep the two adjacent right columns together.
+    first = (737, 2238, 1250, 2447)
+    right = ((1419, 2281, 1519, 2491), (1515, 2304, 1570, 2488))
+    nested = (1346, 2289, 1455, 2477)
+    for members in permutations((first, *right)):
+        areas = [
+            TextArea((733, 2234, 1574, 2495), (737, 2238, 1570, 2491), "dialogue", members),
+            TextArea((1342, 2285, 1459, 2481), nested, "caption", (nested,)),
+        ]
+        for ordering in permutations(areas):
+            separated = _resolve_placement_overlaps(_separate_nested_sources(list(ordering)))
+            assert len(separated) == 3
+            assert sorted(box for area in separated for box in area.members) == sorted((first, *right, nested))
+            assert any(set(area.members) == set(right) for area in separated)
+            for index, area in enumerate(separated):
+                for other in separated[index + 1:]:
+                    a, b = area.placement, other.placement
+                    intersection = max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(0, min(a[3], b[3]) - max(a[1], b[1]))
+                    smaller = min((a[2]-a[0])*(a[3]-a[1]), (b[2]-b[0])*(b[3]-b[1]))
+                    assert intersection / smaller < 0.65
+
+
+def test_cluster_cannot_wrap_around_a_source_through_several_short_edges():
+    members = ((10, 10, 30, 30), (45, 10, 65, 30), (80, 10, 100, 30),
+               (80, 45, 100, 65), (80, 80, 100, 100))
+    blocker = (40, 40, 65, 65)
+    for ordering in permutations(members):
+        clusters = _member_clusters(ordering, blockers=(blocker,))
+        assert len(clusters) > 1
+        assert sorted(box for cluster in clusters for box in cluster) == sorted(members)
+        assert all(_overlap_ratio(union(cluster), blocker) < 0.65 for cluster in clusters)
+
+
+def test_nested_source_is_split_before_tightening_exposes_a_conflict():
+    first = (737, 2238, 1250, 2447)
+    second = (1419, 2281, 1519, 2491)
+    nested = (1346, 2289, 1455, 2477)
+    areas = [
+        TextArea((733, 2234, 1523, 2495), first, "dialogue", (first, second)),
+        TextArea(nested, nested, "caption", (nested,)),
+    ]
+    separated = _separate_nested_sources(areas)
+    assert len(separated) == 3
+    assert sorted(box for area in separated for box in area.members) == sorted((first, second, nested))
 
 
 @pytest.mark.parametrize("language", ["zh-Hans", "zh-Hant"])
