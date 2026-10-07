@@ -28,6 +28,12 @@ def intersection_area(first, second):
     )
 
 
+def _overlap_ratio(first, second):
+    first_area = (first[2] - first[0]) * (first[3] - first[1])
+    second_area = (second[2] - second[0]) * (second[3] - second[1])
+    return intersection_area(first, second) / max(1, min(first_area, second_area))
+
+
 def merge_overlapping_boxes(boxes: list[tuple]) -> list[tuple]:
     # CRAFT can detect both a heading and its individual columns. OCR their
     # union once, including any text that extends beyond the larger detection.
@@ -50,36 +56,66 @@ def merge_overlapping_boxes(boxes: list[tuple]) -> list[tuple]:
             return merged
 
 
-def _member_clusters(members: tuple[tuple[int, int, int, int], ...]) -> list[tuple[tuple[int, int, int, int], ...]]:
+def _member_clusters(
+    members: tuple[tuple[int, int, int, int], ...], *, blockers: tuple[tuple[int, int, int, int], ...] = (),
+) -> list[tuple[tuple[int, int, int, int], ...]]:
     ordered = sorted(members, key=lambda box: (box[1], box[0]))
     if len(ordered) < 2:
         return [tuple(ordered)]
-    heights = sorted(box[3] - box[1] for box in ordered)
-    median_height = heights[len(heights) // 2]
-    gap_limit = max(12, round(median_height * 2.25))
-    clusters: list[list[tuple[int, int, int, int]]] = [[]]
-    previous_bottom = ordered[0][3]
-    for box in ordered:
-        if clusters[-1] and box[1] - previous_bottom > gap_limit:
-            clusters.append([])
-        clusters[-1].append(box)
-        previous_bottom = max(previous_bottom, box[3])
-    return [tuple(cluster) for cluster in clusters]
+    # Vertical text columns can be far apart horizontally while sharing the
+    # same reading-order row. Measure distance in both axes, using the short
+    # side of detections so a tall column does not connect distant balloons.
+    short_sides = sorted(min(box[2] - box[0], box[3] - box[1]) for box in ordered)
+    gap_limit = max(12, round(short_sides[(len(short_sides) - 1) // 2] * 2.25))
+    clusters = []
+    remaining = list(ordered)
+    while remaining:
+        cluster = [remaining.pop(0)]
+        for first in cluster:
+            for second in list(remaining):
+                horizontal_gap = max(0, first[0] - second[2], second[0] - first[2])
+                vertical_gap = max(0, first[1] - second[3], second[1] - first[3])
+                if horizontal_gap <= gap_limit and vertical_gap <= gap_limit:
+                    # A growing cluster must not wrap around another source.
+                    # Wide detections can otherwise make the gap limit large
+                    # enough to reconnect text on opposite sides of a balloon.
+                    joined_members = (*cluster, second)
+                    joined = union(joined_members)
+                    if any(
+                        _overlap_ratio(joined, blocker) >= 0.65
+                        and all(_overlap_ratio(member, blocker) < 0.65 for member in joined_members)
+                        for blocker in blockers
+                    ):
+                        continue
+                    cluster.append(second)
+                    remaining.remove(second)
+        clusters.append(tuple(sorted(cluster, key=lambda box: (box[1], box[0]))))
+    return clusters
 
 
 def _separate_nested_sources(areas: list[TextArea]) -> list[TextArea]:
     # A white component may connect a caption to a distant balloon. Split its
-    # members at large reading-order gaps when another placement is nested.
+    # members at large spatial gaps when another placement is nested.
+    clusters = [
+        _member_clusters(area.members, blockers=tuple(
+            union(other.members) if other.members else other.box
+            for other_index, other in enumerate(areas) if other_index != index
+        ))
+        for index, area in enumerate(areas)
+    ]
     split = set()
     for index, area in enumerate(areas):
-        if len(_member_clusters(area.members)) < 2:
+        if len(clusters[index]) < 2:
             continue
-        area_size = max(1, (area.placement[2] - area.placement[0]) * (area.placement[3] - area.placement[1]))
         for other_index, other in enumerate(areas):
             if index == other_index:
                 continue
-            other_size = max(1, (other.placement[2] - other.placement[0]) * (other.placement[3] - other.placement[1]))
-            if intersection_area(area.placement, other.placement) / min(area_size, other_size) >= 0.65:
+            source = union(area.members) if area.members else area.box
+            other_source = union(other.members) if other.members else other.box
+            # Tightening an inset placement can expose a source-union conflict,
+            # so test that rectangle too before resolving placement overlaps.
+            if (_overlap_ratio(area.placement, other.placement) >= 0.65
+                    or _overlap_ratio(source, other_source) >= 0.65):
                 split.add(index)
                 break
     separated = []
@@ -87,7 +123,7 @@ def _separate_nested_sources(areas: list[TextArea]) -> list[TextArea]:
         if index not in split:
             separated.append(area)
             continue
-        for cluster in _member_clusters(area.members):
+        for cluster in clusters[index]:
             box = union(cluster)
             separated.append(TextArea(box, box, area.kind, cluster))
     return separated
